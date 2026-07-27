@@ -299,36 +299,6 @@ input:focus-visible {
   border-radius: 2px;
 }
 
-.faceGlyph {
-  border: 1px solid currentColor;
-  border-radius: 48% 48% 45% 45%;
-}
-
-.faceGlyph::before {
-  content: "";
-  position: absolute;
-  width: 10px;
-  height: 4px;
-  top: 5px;
-  left: 3px;
-  border-bottom: 1px solid currentColor;
-  border-radius: 0 0 50% 50%;
-  background:
-    radial-gradient(circle at 18% 0, currentColor 0 1px, transparent 1.5px),
-    radial-gradient(circle at 82% 0, currentColor 0 1px, transparent 1.5px);
-}
-
-.faceGlyph::after {
-  content: "";
-  position: absolute;
-  width: 5px;
-  height: 2px;
-  left: 6px;
-  bottom: 3px;
-  border-bottom: 1px solid currentColor;
-  border-radius: 50%;
-}
-
 .plusGlyph::before,
 .plusGlyph::after {
   content: "";
@@ -735,7 +705,7 @@ input:focus-visible {
   z-index: 3;
   height: 43px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   border-bottom: 1px solid var(--line);
   background: rgba(25, 26, 29, 0.96);
   backdrop-filter: blur(12px);
@@ -834,8 +804,7 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.statusDot,
-.privacyDot {
+.statusDot {
   width: 6px;
   height: 6px;
   display: inline-block;
@@ -861,237 +830,6 @@ input:focus-visible {
 
 .activeLut output {
   color: #7e8188;
-}
-
-.beautyPanel {
-  padding: 15px 14px 24px;
-}
-
-.beautyHero {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 9px;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 3px 15px;
-}
-
-.beautyFaceIcon {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(102, 227, 188, 0.3);
-  border-radius: 12px;
-  background:
-    radial-gradient(circle at 58% 34%, rgba(102, 227, 188, 0.2), transparent 28%),
-    rgba(102, 227, 188, 0.07);
-}
-
-.beautyFaceIcon::before {
-  content: "";
-  width: 17px;
-  height: 22px;
-  border: 1px solid var(--accent);
-  border-radius: 48% 48% 45% 45%;
-  opacity: 0.86;
-}
-
-.beautyFaceIcon::after {
-  content: "";
-  position: absolute;
-  width: 6px;
-  height: 3px;
-  bottom: 11px;
-  left: 17px;
-  border-bottom: 1px solid var(--accent);
-  border-radius: 50%;
-}
-
-.beautyFaceIcon i {
-  position: absolute;
-  top: 17px;
-  left: 14px;
-  width: 12px;
-  height: 2px;
-  background:
-    radial-gradient(circle at 10% 50%, var(--accent) 0 1px, transparent 1.5px),
-    radial-gradient(circle at 90% 50%, var(--accent) 0 1px, transparent 1.5px);
-}
-
-.beautyHero > div {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.beautyHero strong {
-  font-size: 12px;
-}
-
-.beautyHero small {
-  overflow: hidden;
-  color: #7c7e84;
-  font-size: 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.beautyStatus {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #55575d;
-  box-shadow: 0 0 0 3px rgba(85, 87, 93, 0.12);
-}
-
-.beautyStatus.detected {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(102, 227, 188, 0.12), 0 0 9px rgba(102, 227, 188, 0.6);
-}
-
-.autoBeautyButton {
-  width: 100%;
-  min-height: 62px;
-  display: grid;
-  grid-template-columns: 31px 1fr;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(102, 227, 188, 0.28);
-  border-radius: 9px;
-  background:
-    linear-gradient(115deg, rgba(102, 227, 188, 0.13), rgba(102, 227, 188, 0.035)),
-    #1d2021;
-  color: #e7f8f1;
-  text-align: left;
-  cursor: pointer;
-}
-
-.autoBeautyButton:hover:not(:disabled) {
-  border-color: rgba(102, 227, 188, 0.72);
-  background:
-    linear-gradient(115deg, rgba(102, 227, 188, 0.18), rgba(102, 227, 188, 0.055)),
-    #1d2021;
-}
-
-.autoBeautyButton:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.autoBeautyButton > span {
-  width: 31px;
-  height: 31px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 15px;
-}
-
-.autoBeautyButton > div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.autoBeautyButton strong {
-  font-size: 10px;
-}
-
-.autoBeautyButton small {
-  color: #7f9b91;
-  font-size: 8px;
-}
-
-.beautyPrivacy {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 3px 12px;
-  color: #6f7278;
-  font-size: 8px;
-}
-
-.beautyControlHeading {
-  height: 31px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid var(--line);
-}
-
-.beautyControlHeading strong {
-  font-size: 10px;
-}
-
-.beautyControlHeading button {
-  border: 0;
-  background: transparent;
-  color: #73767c;
-  font-size: 8px;
-  cursor: pointer;
-}
-
-.beautyControlHeading button:hover {
-  color: var(--accent);
-}
-
-.beautySlider {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  align-items: center;
-  row-gap: 6px;
-  padding: 8px 0 7px;
-}
-
-.beautySlider > span {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.beautySlider strong {
-  color: #aaaeb3;
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.beautySlider small {
-  overflow: hidden;
-  color: #666970;
-  font-size: 7px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.beautySlider output {
-  padding: 2px 4px;
-  border-radius: 3px;
-  background: #242529;
-  color: #9c9ea4;
-  font-size: 8px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.beautySlider input:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.beautyFootnote {
-  margin: 13px 0 0;
-  padding: 10px;
-  border-radius: 7px;
-  background: #1d1e21;
-  color: #666970;
-  font-size: 8px;
-  line-height: 1.6;
 }
 
 .controls {
@@ -1313,11 +1051,6 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 .statusSpacer {
   flex: 1;
-}
-
-.privacyDot {
-  width: 5px;
-  height: 5px;
 }
 
 .hiddenInput {

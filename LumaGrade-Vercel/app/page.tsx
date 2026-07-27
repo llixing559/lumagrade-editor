@@ -25,17 +25,22 @@ import {
   applyAdaptiveOutput,
   LutLayer,
 } from "./adaptive-lut";
+import {
+  AiConfig,
+  AiGradeAdvice,
+  aiGradeToAdjustments,
+} from "./ai-grade";
+import {
+  AdjustmentValues,
+  addAdjustments,
+  applyImageAdjustments,
+  clampAdjustments,
+  EMPTY_ADJUSTMENTS,
+  hasAdjustments,
+} from "./image-adjustments";
 import LutCreator from "./LutCreator";
 
-type Adjustments = {
-  exposure: number;
-  contrast: number;
-  highlights: number;
-  shadows: number;
-  saturation: number;
-  temperature: number;
-  fade: number;
-};
+type Adjustments = AdjustmentValues;
 
 type Preset = {
   id: string;
@@ -56,13 +61,7 @@ type EditorSnapshot = {
 };
 
 const DEFAULTS: Adjustments = {
-  exposure: 0,
-  contrast: 0,
-  highlights: 0,
-  shadows: 0,
-  saturation: 0,
-  temperature: 0,
-  fade: 0,
+  ...EMPTY_ADJUSTMENTS,
 };
 
 const PRESETS: Preset[] = [
@@ -178,6 +177,7 @@ const CONTROL_GROUPS: Array<{
     title: "色彩",
     items: [
       { key: "temperature", label: "色温", min: -100, max: 100 },
+      { key: "tint", label: "色调", min: -100, max: 100 },
       { key: "saturation", label: "饱和度", min: -100, max: 100 },
       { key: "fade", label: "褪色", min: 0, max: 100 },
     ],
@@ -192,37 +192,34 @@ function LogoMark() {
   );
 }
 
-function buildCssFilter(values: Adjustments) {
-  const brightness = Math.max(
-    0,
-    1 + values.exposure / 120 + values.highlights / 500,
-  );
-  const contrast = Math.max(0, 1 + values.contrast / 100);
-  const saturation = Math.max(0, 1 + values.saturation / 100);
-  const shadowLift = Math.max(0, values.shadows) / 900;
-  const temperature =
-    values.temperature > 0
-      ? `sepia(${values.temperature / 700})`
-      : `hue-rotate(${values.temperature / 8}deg)`;
-  const fade =
-    values.fade > 0
-      ? `contrast(${1 - values.fade / 350}) brightness(${1 + values.fade / 650})`
-      : "";
-
-  return [
-    `brightness(${brightness + shadowLift})`,
-    `contrast(${contrast})`,
-    `saturate(${saturation})`,
-    temperature,
-    fade,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function signed(value: number, digits = 0) {
   const rounded = Number(value.toFixed(digits));
   return `${rounded > 0 ? "+" : ""}${rounded}`;
+}
+
+function adaptiveProfileToAdjustments(
+  profile: AdaptiveProfile,
+): Adjustments {
+  return clampAdjustments({
+    exposure: (profile.exposureEv + profile.postExposureEv) * 100,
+    contrast: (profile.contrast - 1) * 100,
+    highlights:
+      -(profile.highlightCompression + profile.postHighlightCompression) *
+      1000,
+    shadows: (profile.shadowLift + profile.postBlackLift) * 1000,
+    saturation: 0,
+    temperature: profile.temperature,
+    tint: profile.tint,
+    fade: 0,
+  });
+}
+
+function copyImageData(imageData: ImageData) {
+  return new ImageData(
+    new Uint8ClampedArray(imageData.data),
+    imageData.width,
+    imageData.height,
+  );
 }
 
 export default function Home() {
@@ -258,7 +255,12 @@ export default function Home() {
   const [lutName, setLutName] = useState<string | null>(null);
   const [lut, setLut] = useState<Lut3D | null>(null);
   const [intensity, setIntensity] = useState(100);
-  const [adjustments, setAdjustments] = useState<Adjustments>(DEFAULTS);
+  const [manualAdjustments, setManualAdjustments] =
+    useState<Adjustments>(DEFAULTS);
+  const [localAutoAdjustments, setLocalAutoAdjustments] =
+    useState<Adjustments>(DEFAULTS);
+  const [aiAdjustments, setAiAdjustments] =
+    useState<Adjustments>(DEFAULTS);
   const [activePanel, setActivePanel] = useState<
     "edit" | "presets" | "creator"
   >("edit");
@@ -270,6 +272,13 @@ export default function Home() {
     useState<AdaptiveProfile | null>(null);
   const [isAnalyzingAdaptation, setIsAnalyzingAdaptation] = useState(false);
   const [adaptiveAnalysisVersion, setAdaptiveAnalysisVersion] = useState(0);
+  const [aiConfig, setAiConfig] = useState<AiConfig>({
+    enabled: false,
+    model: null,
+  });
+  const [gptAssistEnabled, setGptAssistEnabled] = useState(false);
+  const [isGptAnalyzing, setIsGptAnalyzing] = useState(false);
+  const [gptAdvice, setGptAdvice] = useState<AiGradeAdvice | null>(null);
   const [histogram, setHistogram] = useState<Histogram>({
     red: Array(32).fill(0),
     green: Array(32).fill(0),
@@ -285,9 +294,21 @@ export default function Home() {
     [presetId],
   );
 
-  const filter = useMemo(
-    () => buildCssFilter(adjustments),
-    [adjustments],
+  const adjustments = useMemo(
+    () =>
+      clampAdjustments(
+        addAdjustments(
+          localAutoAdjustments,
+          aiAdjustments,
+          manualAdjustments,
+        ),
+      ),
+    [aiAdjustments, localAutoAdjustments, manualAdjustments],
+  );
+
+  const renderAdjustments = useMemo(
+    () => clampAdjustments(addAdjustments(aiAdjustments, manualAdjustments)),
+    [aiAdjustments, manualAdjustments],
   );
 
   const activeLutLayers = useMemo<LutLayer[]>(() => {
@@ -302,6 +323,18 @@ export default function Home() {
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2400);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/ai-grade", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("无法读取 GPT 配置");
+        return (await response.json()) as AiConfig;
+      })
+      .then((config) => setAiConfig(config))
+      .catch(() => setAiConfig({ enabled: false, model: null }));
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -356,7 +389,7 @@ export default function Home() {
   }, [preset, showToast]);
 
   const currentSnapshot = (): EditorSnapshot => ({
-    adjustments: { ...adjustments },
+    adjustments: { ...manualAdjustments },
     presetId,
     presetIntensity,
     intensity,
@@ -379,7 +412,7 @@ export default function Home() {
   };
 
   const restoreSnapshot = (snapshot: EditorSnapshot) => {
-    setAdjustments(snapshot.adjustments);
+    setManualAdjustments(snapshot.adjustments);
     setPresetId(snapshot.presetId);
     setPresetIntensity(snapshot.presetIntensity);
     setIntensity(snapshot.intensity);
@@ -416,12 +449,15 @@ export default function Home() {
       });
       setFileName(file.name);
       setAdaptiveProfile(null);
+      setLocalAutoAdjustments(DEFAULTS);
+      setAiAdjustments(DEFAULTS);
+      setGptAdvice(null);
       undoStack.current = [];
       redoStack.current = [];
       syncHistoryState();
       setPresetId("none");
       setPresetIntensity(0);
-      setAdjustments(DEFAULTS);
+      setManualAdjustments(DEFAULTS);
       setZoom(100);
       setPan({ x: 0, y: 0 });
     },
@@ -453,6 +489,8 @@ export default function Home() {
   useEffect(() => {
     const image = imageRef.current;
     const analysisId = ++adaptiveAnalysisId.current;
+    const controller = new AbortController();
+    let localProfileReady = false;
     if (
       !image ||
       !imageReady ||
@@ -460,14 +498,22 @@ export default function Home() {
       activeLutLayers.length === 0
     ) {
       setAdaptiveProfile(null);
+      setLocalAutoAdjustments(DEFAULTS);
+      setAiAdjustments(DEFAULTS);
+      setGptAdvice(null);
       setIsAnalyzingAdaptation(false);
+      setIsGptAnalyzing(false);
       return;
     }
 
     setIsAnalyzingAdaptation(true);
+    setIsGptAnalyzing(false);
     setAdaptiveProfile(null);
+    setLocalAutoAdjustments(DEFAULTS);
+    setAiAdjustments(DEFAULTS);
+    setGptAdvice(null);
     const timer = window.setTimeout(() => {
-      const frame = window.requestAnimationFrame(() => {
+      const frame = window.requestAnimationFrame(async () => {
         if (analysisId !== adaptiveAnalysisId.current) return;
         try {
           const analysisCanvas = document.createElement("canvas");
@@ -503,17 +549,91 @@ export default function Home() {
             analysisCanvas.height,
           );
           const profile = analyzeAdaptiveProfile(data, activeLutLayers);
+          localProfileReady = true;
           if (analysisId === adaptiveAnalysisId.current) {
             setAdaptiveProfile(profile);
+            setLocalAutoAdjustments(
+              adaptiveProfileToAdjustments(profile),
+            );
+            setIsAnalyzingAdaptation(false);
           }
-        } catch {
+
+          if (
+            gptAssistEnabled &&
+            aiConfig.enabled &&
+            analysisId === adaptiveAnalysisId.current
+          ) {
+            setIsGptAnalyzing(true);
+            const candidateCanvas = document.createElement("canvas");
+            candidateCanvas.width = analysisCanvas.width;
+            candidateCanvas.height = analysisCanvas.height;
+            const candidateContext = candidateCanvas.getContext("2d");
+            if (!candidateContext) throw new Error("无法创建 GPT 预览画布");
+            let candidate = copyImageData(data);
+            candidate = applyAdaptiveInput(candidate, profile);
+            for (const layer of activeLutLayers) {
+              candidate = applyLut(candidate, layer.lut, layer.intensity);
+            }
+            candidate = applyAdaptiveOutput(candidate, profile);
+            candidateContext.putImageData(candidate, 0, 0);
+            const response = await fetch("/api/ai-grade", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mode: "grade",
+                images: [
+                  analysisCanvas.toDataURL("image/jpeg", 0.78),
+                  candidateCanvas.toDataURL("image/jpeg", 0.78),
+                ],
+                metadata: {
+                  preset: preset.name,
+                  presetIntensity,
+                  customLut: lutName,
+                  customLutIntensity: intensity,
+                  sourceMedian: profile.sourceMedian,
+                  sourceBlack: profile.sourceBlack,
+                  sourceWhite: profile.sourceWhite,
+                  localExposureEv:
+                    profile.exposureEv + profile.postExposureEv,
+                  localTemperature: profile.temperature,
+                  localTint: profile.tint,
+                  clippedBefore: profile.clippedBefore,
+                  clippedAfter: profile.clippedAfter,
+                },
+              }),
+              signal: controller.signal,
+            });
+            const payload = (await response.json()) as {
+              error?: string;
+              result?: AiGradeAdvice;
+            };
+            if (!response.ok || !payload.result) {
+              throw new Error(payload.error || "GPT 云端复核失败");
+            }
+            if (analysisId === adaptiveAnalysisId.current) {
+              setGptAdvice(payload.result);
+              setAiAdjustments(aiGradeToAdjustments(payload.result));
+            }
+          }
+        } catch (error) {
+          if (controller.signal.aborted) return;
           if (analysisId === adaptiveAnalysisId.current) {
-            setAdaptiveProfile(null);
-            showToast("智能匹配分析失败，已保留普通 LUT 模式");
+            if (!localProfileReady) {
+              setAdaptiveProfile(null);
+              setLocalAutoAdjustments(DEFAULTS);
+            }
+            setAiAdjustments(DEFAULTS);
+            setGptAdvice(null);
+            showToast(
+              error instanceof Error
+                ? error.message
+                : "智能匹配分析失败，已保留普通 LUT 模式",
+            );
           }
         } finally {
           if (analysisId === adaptiveAnalysisId.current) {
             setIsAnalyzingAdaptation(false);
+            setIsGptAnalyzing(false);
           }
         }
       });
@@ -524,12 +644,19 @@ export default function Home() {
 
     return () => {
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [
     activeLutLayers,
     adaptiveAnalysisVersion,
+    aiConfig.enabled,
     autoAdaptEnabled,
+    gptAssistEnabled,
     imageReady,
+    intensity,
+    lutName,
+    preset.name,
+    presetIntensity,
     showToast,
   ]);
 
@@ -545,9 +672,7 @@ export default function Home() {
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return;
       context.clearRect(0, 0, canvas.width, canvas.height);
-      context.filter = isShowingOriginal ? "none" : filter;
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      context.filter = "none";
 
       let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       let pixelsChanged = false;
@@ -558,6 +683,10 @@ export default function Home() {
         activeLutLayers.length > 0
       ) {
         imageData = applyAdaptiveInput(imageData, adaptiveProfile);
+        pixelsChanged = true;
+      }
+      if (!isShowingOriginal && hasAdjustments(renderAdjustments)) {
+        imageData = applyImageAdjustments(imageData, renderAdjustments);
         pixelsChanged = true;
       }
       if (presetLut && presetIntensity > 0 && !isShowingOriginal) {
@@ -587,13 +716,13 @@ export default function Home() {
     activeLutLayers.length,
     adaptiveProfile,
     autoAdaptEnabled,
-    filter,
     imageReady,
     intensity,
     isShowingOriginal,
     lut,
     presetIntensity,
     presetLut,
+    renderAdjustments,
   ]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -641,14 +770,20 @@ export default function Home() {
   };
 
   const updateAdjustment = (key: keyof Adjustments, value: number) => {
-    setAdjustments((current) => ({ ...current, [key]: value }));
+    setManualAdjustments((current) => ({
+      ...current,
+      [key]: value - localAutoAdjustments[key] - aiAdjustments[key],
+    }));
   };
 
   const reset = () => {
     remember();
     setPresetId("none");
     setPresetIntensity(0);
-    setAdjustments(DEFAULTS);
+    setManualAdjustments(DEFAULTS);
+    setLocalAutoAdjustments(DEFAULTS);
+    setAiAdjustments(DEFAULTS);
+    setGptAdvice(null);
     setIntensity(100);
     setLutName(null);
     setLut(null);
@@ -701,32 +836,31 @@ export default function Home() {
       exportCanvas.height = image.naturalHeight;
       const context = exportCanvas.getContext("2d", { willReadFrequently: true });
       if (!context) throw new Error("浏览器无法创建导出画布");
-      context.filter = filter;
       context.drawImage(image, 0, 0);
-      context.filter = "none";
-      if ((presetLut && presetIntensity > 0) || (lut && intensity > 0)) {
-        let data = context.getImageData(
-          0,
-          0,
-          exportCanvas.width,
-          exportCanvas.height,
-        );
-        const exportProfile =
-          autoAdaptEnabled && activeLutLayers.length > 0
-            ? adaptiveProfile ?? analyzeAdaptiveProfile(data, activeLutLayers)
-            : null;
-        if (exportProfile) {
-          data = applyAdaptiveInput(data, exportProfile);
-        }
-        if (presetLut && presetIntensity > 0) {
-          data = applyLut(data, presetLut, presetIntensity);
-        }
-        if (lut && intensity > 0) data = applyLut(data, lut, intensity);
-        if (exportProfile) {
-          data = applyAdaptiveOutput(data, exportProfile);
-        }
-        context.putImageData(data, 0, 0);
+      let data = context.getImageData(
+        0,
+        0,
+        exportCanvas.width,
+        exportCanvas.height,
+      );
+      const exportProfile =
+        autoAdaptEnabled && activeLutLayers.length > 0
+          ? adaptiveProfile ?? analyzeAdaptiveProfile(data, activeLutLayers)
+          : null;
+      if (exportProfile) {
+        data = applyAdaptiveInput(data, exportProfile);
       }
+      if (hasAdjustments(renderAdjustments)) {
+        data = applyImageAdjustments(data, renderAdjustments);
+      }
+      if (presetLut && presetIntensity > 0) {
+        data = applyLut(data, presetLut, presetIntensity);
+      }
+      if (lut && intensity > 0) data = applyLut(data, lut, intensity);
+      if (exportProfile) {
+        data = applyAdaptiveOutput(data, exportProfile);
+      }
+      context.putImageData(data, 0, 0);
       const blob = await new Promise<Blob | null>((resolve) =>
         exportCanvas.toBlob(resolve, "image/jpeg", 0.95),
       );
@@ -810,7 +944,10 @@ export default function Home() {
                 className="exportButton"
                 onClick={downloadPreview}
                 disabled={
-                  isExporting || isPresetLoading || isAnalyzingAdaptation
+                  isExporting ||
+                  isPresetLoading ||
+                  isAnalyzingAdaptation ||
+                  isGptAnalyzing
                 }
               >
                 {isExporting
@@ -819,6 +956,8 @@ export default function Home() {
                     ? "载入 LUT…"
                     : isAnalyzingAdaptation
                       ? "智能分析…"
+                      : isGptAnalyzing
+                        ? "GPT 复核…"
                       : "导出"}
               </button>
             </>
@@ -865,6 +1004,7 @@ export default function Home() {
 
         {activePanel === "creator" ? (
           <LutCreator
+            aiConfig={aiConfig}
             showToast={showToast}
             onExit={() => setActivePanel("edit")}
             onUseLut={(trainedLut) => {
@@ -1123,9 +1263,17 @@ export default function Home() {
                       role="switch"
                       aria-checked={autoAdaptEnabled}
                       aria-label="智能匹配"
-                      onClick={() =>
-                        setAutoAdaptEnabled((current) => !current)
-                      }
+                      onClick={() => {
+                        const next = !autoAdaptEnabled;
+                        setAutoAdaptEnabled(next);
+                        if (!next) {
+                          setAdaptiveProfile(null);
+                          setLocalAutoAdjustments(DEFAULTS);
+                          setAiAdjustments(DEFAULTS);
+                          setGptAdvice(null);
+                          setIsGptAnalyzing(false);
+                        }
+                      }}
                     >
                       <i />
                     </button>
@@ -1194,7 +1342,9 @@ export default function Home() {
                             </span>
                           </div>
                           <div className="adaptiveFooter">
-                            <span>可信度 {adaptiveProfile.confidence}%</span>
+                            <span>
+                              可信度 {adaptiveProfile.confidence}% · 已写入滑杆
+                            </span>
                             <button
                               onClick={() =>
                                 setAdaptiveAnalysisVersion(
@@ -1205,6 +1355,56 @@ export default function Home() {
                               重新分析
                             </button>
                           </div>
+                          <div
+                            className={
+                              gptAssistEnabled
+                                ? "gptAssist enabled"
+                                : "gptAssist"
+                            }
+                          >
+                            <div>
+                              <span>GPT 云端复核</span>
+                              <small>
+                                {aiConfig.enabled
+                                  ? `${aiConfig.model} · 上传两张压缩预览`
+                                  : "部署端尚未配置 OPENAI_API_KEY"}
+                              </small>
+                            </div>
+                            <button
+                              role="switch"
+                              aria-checked={gptAssistEnabled}
+                              disabled={!aiConfig.enabled}
+                              onClick={() => {
+                                if (!aiConfig.enabled) {
+                                  showToast("请先在 Vercel 配置 OpenAI API Key");
+                                  return;
+                                }
+                                const next = !gptAssistEnabled;
+                                setGptAssistEnabled(next);
+                                if (!next) {
+                                  setAiAdjustments(DEFAULTS);
+                                  setGptAdvice(null);
+                                }
+                              }}
+                            >
+                              <i />
+                            </button>
+                          </div>
+                          {isGptAnalyzing && (
+                            <div className="gptStatus">
+                              <i />
+                              GPT 正在复核曝光、白平衡和反差…
+                            </div>
+                          )}
+                          {gptAdvice && !isGptAnalyzing && (
+                            <div className="gptResult">
+                              <span>
+                                {gptAdvice.scene} · 可信度{" "}
+                                {Math.round(gptAdvice.confidence)}%
+                              </span>
+                              <p>{gptAdvice.rationale}</p>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <div className="adaptiveLoading failed">
@@ -1295,13 +1495,15 @@ export default function Home() {
                       <button
                         onClick={() => {
                           remember();
-                          setAdjustments((current) => {
+                          setManualAdjustments((current) => {
                             const next = { ...current };
                             group.items.forEach(({ key }) => {
-                              next[key] = DEFAULTS[key];
+                              next[key] =
+                                -localAutoAdjustments[key] -
+                                aiAdjustments[key];
                             });
                             return next;
-                          })
+                          });
                         }}
                       >
                         ↺
@@ -1344,8 +1546,10 @@ export default function Home() {
         </span>
         <span>
           {activePanel === "creator"
-            ? "参考照片逐张分析，不上传服务器"
-            : "照片不会上传至服务器"}
+            ? "本地训练；启用 GPT 后仅上传代表性压缩预览"
+            : gptAssistEnabled
+              ? "GPT 开启时会上传原片与结果的压缩预览"
+              : "照片不会上传至服务器"}
         </span>
         <span className="statusSpacer" />
         <span>{activePanel === "creator" ? "33³ CUBE" : "sRGB"}</span>

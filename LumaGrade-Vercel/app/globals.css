@@ -1028,6 +1028,127 @@ input:focus-visible {
   color: var(--accent);
 }
 
+.gptAssist {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 10px 8px;
+  padding: 9px;
+  border: 1px solid #303238;
+  border-radius: 7px;
+  background: #191a1e;
+}
+
+.gptAssist.enabled {
+  border-color: rgba(109, 142, 255, 0.35);
+  background:
+    linear-gradient(135deg, rgba(94, 122, 226, 0.1), transparent 60%),
+    #191a1e;
+}
+
+.gptAssist > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gptAssist > div > span {
+  color: #b8bcc8;
+  font-size: 8px;
+  font-weight: 620;
+}
+
+.gptAssist > div > small {
+  overflow: hidden;
+  color: #626875;
+  font-size: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gptAssist > button,
+.creatorAiOption > button {
+  position: relative;
+  width: 31px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  border-radius: 12px;
+  background: #3a3c41;
+  cursor: pointer;
+}
+
+.gptAssist > button:disabled,
+.creatorAiOption > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gptAssist > button i,
+.creatorAiOption > button i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #a5a8ad;
+  transition:
+    left 0.18s ease-out,
+    background 0.18s ease-out;
+}
+
+.gptAssist.enabled > button,
+.creatorAiOption.enabled > button {
+  background: rgba(100, 127, 226, 0.45);
+}
+
+.gptAssist.enabled > button i,
+.creatorAiOption.enabled > button i {
+  left: 16px;
+  background: #91a9ff;
+  box-shadow: 0 0 8px rgba(113, 143, 255, 0.45);
+}
+
+.gptStatus {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 10px 8px;
+  color: #7f89a9;
+  font-size: 7px;
+}
+
+.gptStatus i {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #465174;
+  border-top-color: #91a9ff;
+  border-radius: 50%;
+  animation: adaptiveSpin 0.8s linear infinite;
+}
+
+.gptResult {
+  margin: 0 10px 9px;
+  padding: 8px 9px;
+  border-left: 2px solid #7188df;
+  background: rgba(95, 120, 213, 0.055);
+}
+
+.gptResult span {
+  color: #8f9bc4;
+  font-size: 7px;
+}
+
+.gptResult p {
+  margin: 5px 0 0;
+  color: #707789;
+  font-size: 6px;
+  line-height: 1.45;
+}
+
 .activeLut {
   margin: 13px 14px 2px;
   padding: 10px;
@@ -1846,6 +1967,66 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 .creatorName input:focus {
   border-color: rgba(102, 227, 188, 0.7);
+}
+
+.creatorAiOption {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  margin: 0 14px 13px;
+  padding: 10px;
+  border: 1px solid #303238;
+  border-radius: 8px;
+  background: #1b1c20;
+}
+
+.creatorAiOption.enabled {
+  border-color: rgba(109, 142, 255, 0.35);
+  background:
+    linear-gradient(135deg, rgba(94, 122, 226, 0.09), transparent 62%),
+    #1b1c20;
+}
+
+.creatorAiOption > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.creatorAiOption strong {
+  color: #bdc1cb;
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.creatorAiOption small {
+  overflow: hidden;
+  color: #626875;
+  font-size: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creatorAiResult {
+  margin: 0 14px 13px;
+  padding: 10px;
+  border-left: 2px solid #7188df;
+  background: rgba(95, 120, 213, 0.055);
+}
+
+.creatorAiResult span {
+  color: #98a4cd;
+  font-size: 7px;
+}
+
+.creatorAiResult p {
+  margin: 6px 0 0;
+  color: #707789;
+  font-size: 7px;
+  line-height: 1.5;
 }
 
 .creatorRequirements,

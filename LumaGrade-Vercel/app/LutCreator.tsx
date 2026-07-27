@@ -9,6 +9,11 @@ import {
 } from "react";
 import type { Lut3D } from "./lut";
 import {
+  AiConfig,
+  AiLutScanAdvice,
+  refineLutWithAiScan,
+} from "./ai-grade";
+import {
   LutTrainingResult,
   MIN_REFERENCE_IMAGES,
   RECOMMENDED_REFERENCE_IMAGES,
@@ -18,10 +23,50 @@ import {
 } from "./lut-trainer";
 
 type LutCreatorProps = {
+  aiConfig: AiConfig;
   onUseLut: (lut: Lut3D) => void;
   onExit: () => void;
   showToast: (message: string) => void;
 };
+
+const MAX_GPT_SCAN_IMAGES = 8;
+
+async function createCloudPreview(file: File, signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`无法读取 ${file.name}`));
+      element.src = url;
+    });
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const canvas = document.createElement("canvas");
+    const ratio = Math.min(
+      1,
+      600 / Math.max(image.naturalWidth, image.naturalHeight),
+    );
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("无法创建云端扫描预览");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.68);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function representativeFiles(files: File[]) {
+  const count = Math.min(MAX_GPT_SCAN_IMAGES, files.length);
+  if (count === files.length) return files;
+  return Array.from({ length: count }, (_, index) => {
+    const position =
+      count === 1 ? 0 : Math.round((index * (files.length - 1)) / (count - 1));
+    return files[position];
+  });
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -66,6 +111,7 @@ function Metric({
 }
 
 export default function LutCreator({
+  aiConfig,
   onUseLut,
   onExit,
   showToast,
@@ -75,6 +121,10 @@ export default function LutCreator({
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
+  const [gptScanEnabled, setGptScanEnabled] = useState(false);
+  const [isGptScanning, setIsGptScanning] = useState(false);
+  const [gptScanAdvice, setGptScanAdvice] =
+    useState<AiLutScanAdvice | null>(null);
   const [progress, setProgress] = useState<TrainingProgress | null>(null);
   const [result, setResult] = useState<LutTrainingResult | null>(null);
   const [projectName, setProjectName] = useState("我的专属色彩");
@@ -105,6 +155,7 @@ export default function LutCreator({
     });
     setResult(null);
     setProgress(null);
+    setGptScanAdvice(null);
     if (invalidCount) showToast(`${invalidCount} 个不支持的文件已跳过`);
   };
 
@@ -123,6 +174,7 @@ export default function LutCreator({
     if (isTraining) return;
     setFiles((current) => current.filter((file) => file !== target));
     setResult(null);
+    setGptScanAdvice(null);
   };
 
   const train = async () => {
@@ -130,6 +182,8 @@ export default function LutCreator({
     const controller = new AbortController();
     abortController.current = controller;
     setIsTraining(true);
+    setIsGptScanning(false);
+    setGptScanAdvice(null);
     setResult(null);
     setProgress({
       phase: "decode",
@@ -144,8 +198,54 @@ export default function LutCreator({
         setProgress,
         controller.signal,
       );
-      setResult(trained);
-      showToast(`33³ LUT 已生成 · 可信度 ${trained.metrics.confidence}%`);
+      let finalResult = trained;
+      if (gptScanEnabled && aiConfig.enabled) {
+        setIsGptScanning(true);
+        try {
+          const scanFiles = representativeFiles(files);
+          const images = await Promise.all(
+            scanFiles.map((file) => createCloudPreview(file, controller.signal)),
+          );
+          const response = await fetch("/api/ai-grade", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "lut-scan",
+              images,
+              metadata: {
+                projectName: projectName.trim(),
+                totalImages: files.length,
+                scannedImages: images.length,
+                metrics: trained.metrics,
+                toneCurve: trained.toneCurve.filter(
+                  (_, index) => index % 32 === 0,
+                ),
+                hueResponse: trained.hueResponse,
+                saturationResponse: trained.saturationResponse,
+              },
+            }),
+            signal: controller.signal,
+          });
+          const payload = (await response.json()) as {
+            error?: string;
+            result?: AiLutScanAdvice;
+          };
+          if (!response.ok || !payload.result) {
+            throw new Error(payload.error || "GPT LUT 扫描失败");
+          }
+          setGptScanAdvice(payload.result);
+          finalResult = refineLutWithAiScan(trained, payload.result);
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          showToast(
+            `${error instanceof Error ? error.message : "GPT 扫描失败"}，已保留本地模型`,
+          );
+        } finally {
+          setIsGptScanning(false);
+        }
+      }
+      setResult(finalResult);
+      showToast(`33³ LUT 已生成 · 可信度 ${finalResult.metrics.confidence}%`);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         showToast("训练已取消");
@@ -155,6 +255,7 @@ export default function LutCreator({
     } finally {
       abortController.current = null;
       setIsTraining(false);
+      setIsGptScanning(false);
     }
   };
 
@@ -246,11 +347,13 @@ export default function LutCreator({
           </div>
           <div>
             <span>分析方式</span>
-            <strong>逐张取样</strong>
+            <strong>{gptScanEnabled ? "本地 + GPT" : "逐张取样"}</strong>
           </div>
           <div>
             <span>隐私</span>
-            <strong>本地处理</strong>
+            <strong>
+              {gptScanEnabled ? `上传至多 ${MAX_GPT_SCAN_IMAGES} 张预览` : "本地处理"}
+            </strong>
           </div>
         </div>
 
@@ -341,7 +444,11 @@ export default function LutCreator({
         {isDragging && (
           <div className="creatorDragOverlay">
             <strong>松开，加入训练数据集</strong>
-            <span>照片不会上传到服务器</span>
+            <span>
+              {gptScanEnabled
+                ? "仅上传代表性压缩预览用于 GPT 扫描"
+                : "照片不会上传到服务器"}
+            </span>
           </div>
         )}
 
@@ -378,6 +485,37 @@ export default function LutCreator({
           />
         </label>
 
+        <div
+          className={
+            gptScanEnabled ? "creatorAiOption enabled" : "creatorAiOption"
+          }
+        >
+          <div>
+            <strong>GPT 云端样本扫描</strong>
+            <small>
+              {aiConfig.enabled
+                ? `${aiConfig.model} · 最多扫描 ${MAX_GPT_SCAN_IMAGES} 张代表性预览`
+                : "部署端尚未配置 OPENAI_API_KEY"}
+            </small>
+          </div>
+          <button
+            role="switch"
+            aria-checked={gptScanEnabled}
+            disabled={!aiConfig.enabled || isTraining}
+            onClick={() => {
+              if (!aiConfig.enabled) {
+                showToast("请先在 Vercel 配置 OpenAI API Key");
+                return;
+              }
+              setGptScanEnabled((current) => !current);
+              setResult(null);
+              setGptScanAdvice(null);
+            }}
+          >
+            <i />
+          </button>
+        </div>
+
         {!result ? (
           <>
             <div className="creatorRequirements">
@@ -403,6 +541,15 @@ export default function LutCreator({
               <strong>{result.metrics.confidence}</strong>
               <small>/ 100</small>
             </div>
+            {gptScanAdvice && (
+              <div className="creatorAiResult">
+                <span>
+                  GPT 一致性 {Math.round(gptScanAdvice.coherence)}% · 复核可信度{" "}
+                  {Math.round(gptScanAdvice.confidence)}%
+                </span>
+                <p>{gptScanAdvice.rationale}</p>
+              </div>
+            )}
             <div className="creatorMetrics">
               <Metric label="色相覆盖" value={result.metrics.hueCoverage} />
               <Metric label="阶调覆盖" value={result.metrics.toneCoverage} />
@@ -486,7 +633,9 @@ export default function LutCreator({
               onClick={train}
             >
               {isTraining
-                ? "正在训练…"
+                ? isGptScanning
+                  ? "GPT 正在扫描样本…"
+                  : "正在训练…"
                 : remaining
                   ? `还需 ${remaining} 张照片`
                   : "生成 33³ LUT"}

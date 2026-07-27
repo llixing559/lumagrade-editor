@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:lut": "node scripts/test-lut-trainer.cjs",
-    "test:adaptive": "node scripts/test-adaptive-lut.cjs"
+    "test:adaptive": "node scripts/test-adaptive-lut.cjs",
+    "test:adjustments": "node scripts/test-image-adjustments.cjs"
   },
   "dependencies": {
     "next": "16.2.6",

@@ -15,11 +15,11 @@ export const BEAUTY_DEFAULTS: BeautySettings = {
 };
 
 export const NATURAL_BEAUTY: BeautySettings = {
-  smooth: 36,
-  brighten: 18,
-  faceSlim: 20,
-  eyeBright: 16,
-  rosy: 10,
+  smooth: 48,
+  brighten: 30,
+  faceSlim: 28,
+  eyeBright: 24,
+  rosy: 16,
 };
 
 type FaceBounds = {
@@ -43,22 +43,33 @@ export function hasBeauty(settings: BeautySettings) {
 function isSkin(r: number, g: number, b: number) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  const warmSkin =
-    r > 82 &&
-    g > 32 &&
+  const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+  const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+  const chromaSkin =
+    r > 55 &&
+    g > 28 &&
     b > 18 &&
-    r > g * 1.035 &&
-    r > b * 1.08 &&
-    max - min > 13;
+    cb > 72 &&
+    cb < 139 &&
+    cr > 124 &&
+    cr < 181 &&
+    r > g * 0.92;
+  const warmSkin =
+    r > 72 &&
+    g > 30 &&
+    b > 16 &&
+    r > g * 0.98 &&
+    r > b * 1.035 &&
+    max - min > 9;
   const lightSkin =
-    r > 178 &&
-    g > 142 &&
-    b > 118 &&
-    r > b &&
-    Math.abs(r - g) < 58 &&
-    max - min > 8;
+    r > 155 &&
+    g > 122 &&
+    b > 98 &&
+    r > b * 0.98 &&
+    Math.abs(r - g) < 72 &&
+    max - min > 6;
 
-  return warmSkin || lightSkin;
+  return chromaSkin || warmSkin || lightSkin;
 }
 
 function findFaceBounds(imageData: ImageData): FaceBounds | null {
@@ -79,7 +90,24 @@ function findFaceBounds(imageData: ImageData): FaceBounds | null {
     }
   }
 
-  const visited = new Uint8Array(mask.length);
+  const expandedMask = new Uint8Array(mask);
+  for (let gy = 0; gy < gridHeight; gy += 1) {
+    for (let gx = 0; gx < gridWidth; gx += 1) {
+      const index = gy * gridWidth + gx;
+      if (!mask[index]) continue;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = gx + dx;
+          const ny = gy + dy;
+          if (nx >= 0 && nx < gridWidth && ny >= 0 && ny < gridHeight) {
+            expandedMask[ny * gridWidth + nx] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  const visited = new Uint8Array(expandedMask.length);
   let best:
     | {
         count: number;
@@ -92,8 +120,8 @@ function findFaceBounds(imageData: ImageData): FaceBounds | null {
     | undefined;
   const directions = [-1, 0, 1];
 
-  for (let start = 0; start < mask.length; start += 1) {
-    if (!mask[start] || visited[start]) continue;
+  for (let start = 0; start < expandedMask.length; start += 1) {
+    if (!expandedMask[start] || visited[start]) continue;
     const queue = [start];
     visited[start] = 1;
     let cursor = 0;
@@ -120,7 +148,7 @@ function findFaceBounds(imageData: ImageData): FaceBounds | null {
           const ny = y + dy;
           if (nx < 0 || nx >= gridWidth || ny < 0 || ny >= gridHeight) continue;
           const neighbor = ny * gridWidth + nx;
-          if (mask[neighbor] && !visited[neighbor]) {
+          if (expandedMask[neighbor] && !visited[neighbor]) {
             visited[neighbor] = 1;
             queue.push(neighbor);
           }
@@ -202,7 +230,7 @@ function applyFaceSlim(
   const centerY = face.y + face.height * 0.5;
   const radiusX = face.width * 0.56;
   const radiusY = face.height * 0.5;
-  const strength = (amount / 100) * 0.22;
+  const strength = (amount / 100) * 0.32;
   const startX = Math.max(0, Math.floor(centerX - radiusX));
   const endX = Math.min(width - 1, Math.ceil(centerX + radiusX));
   const startY = Math.max(0, Math.floor(centerY - radiusY));
@@ -246,8 +274,8 @@ function applySkinFinish(
     1,
     Math.min(5, Math.round((face.width / 420) * (1 + settings.smooth / 42))),
   );
-  const smoothMix = (settings.smooth / 100) * 0.72;
-  const brighten = (settings.brighten / 100) * 22;
+  const smoothMix = (settings.smooth / 100) * 0.84;
+  const brighten = (settings.brighten / 100) * 38;
   const rosy = settings.rosy / 100;
   const neighborOffsets = [
     [-radius, 0],
@@ -259,6 +287,7 @@ function applySkinFinish(
     [-radius, radius],
     [radius, radius],
   ];
+  let processedPixels = 0;
 
   for (let y = startY; y <= endY; y += 1) {
     for (let x = startX; x <= endX; x += 1) {
@@ -267,6 +296,7 @@ function applySkinFinish(
       const g = source[offset + 1];
       const b = source[offset + 2];
       if (!isSkin(r, g, b)) continue;
+      processedPixels += 1;
 
       let red = r;
       let green = g;
@@ -300,12 +330,69 @@ function applySkinFinish(
 
       const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
       const highlightGuard = 1 - Math.max(0, luminance - 210) / 60;
-      red += brighten * highlightGuard + rosy * 9;
-      green += brighten * highlightGuard * 0.98 + rosy * 1.5;
-      blue += brighten * highlightGuard * 0.93 - rosy * 2.5;
+      red += brighten * highlightGuard + rosy * 14;
+      green += brighten * highlightGuard * 0.97 + rosy * 2.5;
+      blue += brighten * highlightGuard * 0.9 - rosy * 4;
       pixels[offset] = clampByte(red);
       pixels[offset + 1] = clampByte(green);
       pixels[offset + 2] = clampByte(blue);
+    }
+  }
+
+  return processedPixels;
+}
+
+function applySoftFallback(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  face: FaceBounds,
+  settings: BeautySettings,
+) {
+  const source = new Uint8ClampedArray(pixels);
+  const centerX = face.x + face.width / 2;
+  const centerY = face.y + face.height / 2;
+  const radiusX = face.width / 2;
+  const radiusY = face.height / 2;
+  const startX = Math.max(0, Math.floor(face.x));
+  const endX = Math.min(width - 1, Math.ceil(face.x + face.width));
+  const startY = Math.max(0, Math.floor(face.y));
+  const endY = Math.min(height - 1, Math.ceil(face.y + face.height));
+  const radius = Math.max(1, Math.min(6, Math.round(face.width / 260)));
+  const smoothMix = (settings.smooth / 100) * 0.34;
+  const brighten = (settings.brighten / 100) * 18;
+  const rosy = settings.rosy / 100;
+
+  for (let y = startY; y <= endY; y += 1) {
+    const ny = (y - centerY) / radiusY;
+    for (let x = startX; x <= endX; x += 1) {
+      const nx = (x - centerX) / radiusX;
+      const distance = nx * nx + ny * ny;
+      if (distance >= 1) continue;
+      const falloff = Math.pow(1 - distance, 1.8);
+      const offset = (y * width + x) * 4;
+      const left = (y * width + Math.max(0, x - radius)) * 4;
+      const right = (y * width + Math.min(width - 1, x + radius)) * 4;
+      const top = (Math.max(0, y - radius) * width + x) * 4;
+      const bottom = (Math.min(height - 1, y + radius) * width + x) * 4;
+
+      for (let channel = 0; channel < 3; channel += 1) {
+        const average =
+          (source[offset + channel] * 2 +
+            source[left + channel] +
+            source[right + channel] +
+            source[top + channel] +
+            source[bottom + channel]) /
+          6;
+        const colorLift =
+          channel === 0 ? rosy * 8 : channel === 1 ? rosy * 1.5 : -rosy * 2;
+        pixels[offset + channel] = clampByte(
+          source[offset + channel] +
+            (average - source[offset + channel]) * smoothMix * falloff +
+            brighten * falloff +
+            colorLift * falloff,
+        );
+      }
     }
   }
 }
@@ -343,7 +430,10 @@ function applyEyeBright(
           pixels[offset + 1] * 0.587 +
           pixels[offset + 2] * 0.114;
         const falloff = Math.pow(1 - distance, 1.5);
-        const lift = Math.min(18, Math.max(3, 190 - luminance) * 0.08) * strength * falloff;
+        const lift =
+          Math.min(24, Math.max(4, 196 - luminance) * 0.11) *
+          strength *
+          falloff;
         pixels[offset] = clampByte(pixels[offset] + lift * 0.92);
         pixels[offset + 1] = clampByte(pixels[offset + 1] + lift);
         pixels[offset + 2] = clampByte(pixels[offset + 2] + lift * 1.08);
@@ -362,12 +452,51 @@ export function applyBeauty(
 
   const face = findFaceBounds(imageData);
   if (!face) {
+    const fallback: FaceBounds = {
+      x: imageData.width * 0.12,
+      y: imageData.height * 0.04,
+      width: imageData.width * 0.76,
+      height: imageData.height * 0.82,
+    };
+    applyFaceSlim(
+      imageData.data,
+      imageData.width,
+      imageData.height,
+      fallback,
+      settings.faceSlim * 0.72,
+    );
+    const processed = applySkinFinish(
+      imageData.data,
+      imageData.width,
+      imageData.height,
+      fallback,
+      settings,
+    );
+    if (processed < Math.max(80, fallback.width * fallback.height * 0.004)) {
+      applySoftFallback(
+        imageData.data,
+        imageData.width,
+        imageData.height,
+        fallback,
+        settings,
+      );
+    }
+    applyEyeBright(
+      imageData.data,
+      imageData.width,
+      imageData.height,
+      fallback,
+      settings.eyeBright * 0.72,
+    );
     return { imageData, faceDetected: false };
   }
 
   const { data, width, height } = imageData;
   applyFaceSlim(data, width, height, face, settings.faceSlim);
-  applySkinFinish(data, width, height, face, settings);
+  const processed = applySkinFinish(data, width, height, face, settings);
+  if (processed < Math.max(80, face.width * face.height * 0.004)) {
+    applySoftFallback(data, width, height, face, settings);
+  }
   applyEyeBright(data, width, height, face, settings.eyeBright);
 
   return { imageData, faceDetected: true };

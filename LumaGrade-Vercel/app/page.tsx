@@ -130,6 +130,22 @@ const PRESETS: Preset[] = [
       "brightness(.995) contrast(1.115) saturate(1.025) sepia(.045) hue-rotate(350deg)",
     colors: ["#b74e42", "#263c42"],
   },
+  {
+    id: "fuji-cc",
+    name: "FUJI CC",
+    note: "Classic Chrome · 纪实低饱和",
+    filter:
+      "brightness(1.012) contrast(1.075) saturate(.78) sepia(.035) hue-rotate(350deg)",
+    colors: ["#b59b77", "#506a72"],
+  },
+  {
+    id: "fuji-nc",
+    name: "FUJI NC",
+    note: "Nostalgic Neg. · 怀旧暖调",
+    filter:
+      "brightness(1.035) contrast(1.035) saturate(1.035) sepia(.085) hue-rotate(354deg)",
+    colors: ["#d39b62", "#4f716f"],
+  },
 ];
 
 const BEAUTY_CONTROLS: Array<{
@@ -847,7 +863,7 @@ export default function Home() {
                       : faceDetected === true
                         ? "已锁定主要面部"
                         : faceDetected === false
-                          ? "未识别到清晰面部"
+                          ? "已启用人像区域美化"
                           : "正在分析画面"}
                   </small>
                 </div>

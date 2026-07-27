@@ -621,7 +621,7 @@ input:focus-visible {
 
 .presetList {
   display: grid;
-  grid-template-columns: repeat(9, minmax(118px, 1fr));
+  grid-template-columns: repeat(11, minmax(118px, 1fr));
   gap: 7px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -1392,7 +1392,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
   }
 
   .presetList {
-    grid-template-columns: repeat(9, 118px);
+    grid-template-columns: repeat(11, 118px);
   }
 
   .statusbar {

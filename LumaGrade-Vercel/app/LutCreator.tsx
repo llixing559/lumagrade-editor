@@ -3,6 +3,7 @@
 import {
   ChangeEvent,
   DragEvent,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -23,6 +24,17 @@ import {
 } from "./ai-providers";
 import AiConnectionPanel from "./AiConnectionPanel";
 import {
+  MAX_PERSISTED_TRAINING_BYTES,
+  WORKSPACE_CLEAR_EVENT,
+  StoredFile,
+  deleteWorkspaceEntry,
+  fileToStored,
+  loadWorkspaceEntry,
+  saveWorkspaceEntry,
+  storedToFile,
+  workspaceErrorMessage,
+} from "./workspace-storage";
+import {
   LutTrainingResult,
   MIN_REFERENCE_IMAGES,
   RECOMMENDED_REFERENCE_IMAGES,
@@ -38,6 +50,17 @@ type LutCreatorProps = {
   onUseLut: (lut: Lut3D) => void;
   onExit: () => void;
   showToast: (message: string) => void;
+};
+
+type CreatorWorkspaceState = {
+  version: 1;
+  savedAt: number;
+  projectName: string;
+  onlineReferenceEnabled: boolean;
+  aiScanEnabled: boolean;
+  result: LutTrainingResult | null;
+  onlineReference: OnlineReference | null;
+  aiScanAdvice: AiLutScanAdvice | null;
 };
 
 const MAX_AI_SCAN_IMAGES = 8;
@@ -152,6 +175,17 @@ export default function LutCreator({
   const [progress, setProgress] = useState<TrainingProgress | null>(null);
   const [result, setResult] = useState<LutTrainingResult | null>(null);
   const [projectName, setProjectName] = useState("我的专属色彩");
+  const [creatorWorkspaceReady, setCreatorWorkspaceReady] = useState(false);
+  const [creatorSaveStatus, setCreatorSaveStatus] = useState<
+    "loading" | "saving" | "saved" | "error" | "large"
+  >("loading");
+  const creatorSaveSuspended = useRef(false);
+  const creatorReadyRef = useRef(false);
+  const creatorStateSaveError = useRef(false);
+  const creatorFilesSaveError = useRef(false);
+  const creatorFilesTooLarge = useRef(false);
+  const latestCreatorState = useRef<CreatorWorkspaceState | null>(null);
+  const latestCreatorFiles = useRef<File[]>([]);
   const aiProvider = useMemo(
     () => detectAiProvider(aiConnection),
     [aiConnection],
@@ -167,6 +201,192 @@ export default function LutCreator({
   );
   const remaining = Math.max(0, MIN_REFERENCE_IMAGES - files.length);
   const canTrain = files.length >= MIN_REFERENCE_IMAGES && !isTraining;
+
+  useEffect(() => {
+    const suspend = () => {
+      creatorSaveSuspended.current = true;
+    };
+    window.addEventListener(WORKSPACE_CLEAR_EVENT, suspend);
+    return () => window.removeEventListener(WORKSPACE_CLEAR_EVENT, suspend);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const restoreWorkspace = async () => {
+      try {
+        const [savedState, savedFiles] = await Promise.all([
+          loadWorkspaceEntry<CreatorWorkspaceState>("creator-state"),
+          loadWorkspaceEntry<StoredFile[]>("creator-files"),
+        ]);
+        if (cancelled) return;
+        if (Array.isArray(savedFiles)) {
+          const restoredFiles = savedFiles
+            .filter(
+              (item) =>
+                item?.blob instanceof Blob &&
+                typeof item.name === "string" &&
+                typeof item.type === "string",
+            )
+            .map(storedToFile);
+          setFiles(restoredFiles);
+        }
+        if (savedState?.version === 1) {
+          setProjectName(savedState.projectName || "我的专属色彩");
+          setOnlineReferenceEnabled(Boolean(savedState.onlineReferenceEnabled));
+          setGptScanEnabled(Boolean(savedState.aiScanEnabled));
+          setResult(savedState.result ?? null);
+          setOnlineReference(savedState.onlineReference ?? null);
+          setGptScanAdvice(savedState.aiScanAdvice ?? null);
+        }
+        setCreatorSaveStatus("saved");
+      } catch (error) {
+        if (cancelled) return;
+        setCreatorSaveStatus("error");
+        showToast(workspaceErrorMessage(error));
+      } finally {
+        if (!cancelled) {
+          creatorReadyRef.current = true;
+          setCreatorWorkspaceReady(true);
+        }
+      }
+    };
+    void restoreWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    latestCreatorState.current = {
+      version: 1,
+      savedAt: Date.now(),
+      projectName,
+      onlineReferenceEnabled,
+      aiScanEnabled: gptScanEnabled,
+      result,
+      onlineReference,
+      aiScanAdvice: gptScanAdvice,
+    };
+  }, [
+    gptScanAdvice,
+    gptScanEnabled,
+    onlineReference,
+    onlineReferenceEnabled,
+    projectName,
+    result,
+  ]);
+
+  useEffect(() => {
+    latestCreatorFiles.current = files;
+  }, [files]);
+
+  useEffect(() => {
+    if (!creatorWorkspaceReady || creatorSaveSuspended.current) return;
+    const timer = window.setTimeout(async () => {
+      if (creatorSaveSuspended.current) return;
+      setCreatorSaveStatus("saving");
+      const state: CreatorWorkspaceState = {
+        version: 1,
+        savedAt: Date.now(),
+        projectName,
+        onlineReferenceEnabled,
+        aiScanEnabled: gptScanEnabled,
+        result,
+        onlineReference,
+        aiScanAdvice: gptScanAdvice,
+      };
+      try {
+        await saveWorkspaceEntry("creator-state", state);
+        creatorStateSaveError.current = false;
+        if (!creatorSaveSuspended.current) {
+          setCreatorSaveStatus(
+            creatorFilesTooLarge.current
+              ? "large"
+              : creatorFilesSaveError.current
+                ? "error"
+                : "saved",
+          );
+        }
+      } catch (error) {
+        creatorStateSaveError.current = true;
+        setCreatorSaveStatus("error");
+        showToast(workspaceErrorMessage(error));
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    creatorWorkspaceReady,
+    gptScanAdvice,
+    gptScanEnabled,
+    onlineReference,
+    onlineReferenceEnabled,
+    projectName,
+    result,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    if (!creatorWorkspaceReady || creatorSaveSuspended.current) return;
+    const timer = window.setTimeout(async () => {
+      if (creatorSaveSuspended.current) return;
+      if (totalSize > MAX_PERSISTED_TRAINING_BYTES) {
+        try {
+          await deleteWorkspaceEntry("creator-files");
+        } catch {
+          // A later save attempt can retry. The UI still reports the size limit.
+        }
+        creatorFilesTooLarge.current = true;
+        creatorFilesSaveError.current = false;
+        setCreatorSaveStatus("large");
+        showToast("训练照片超过 350 MB，仅保存模型设置和已生成结果");
+        return;
+      }
+      try {
+        if (files.length) {
+          await saveWorkspaceEntry(
+            "creator-files",
+            files.map(fileToStored),
+          );
+        } else {
+          await deleteWorkspaceEntry("creator-files");
+        }
+        creatorFilesTooLarge.current = false;
+        creatorFilesSaveError.current = false;
+        if (!creatorSaveSuspended.current) {
+          setCreatorSaveStatus(
+            creatorStateSaveError.current ? "error" : "saved",
+          );
+        }
+      } catch (error) {
+        creatorFilesTooLarge.current = false;
+        creatorFilesSaveError.current = true;
+        setCreatorSaveStatus("error");
+        showToast(workspaceErrorMessage(error));
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [creatorWorkspaceReady, files, showToast, totalSize]);
+
+  useEffect(
+    () => () => {
+      if (!creatorReadyRef.current || creatorSaveSuspended.current) return;
+      const state = latestCreatorState.current;
+      if (state) void saveWorkspaceEntry("creator-state", state);
+      const latestFiles = latestCreatorFiles.current;
+      const size = latestFiles.reduce((sum, file) => sum + file.size, 0);
+      if (size <= MAX_PERSISTED_TRAINING_BYTES) {
+        if (latestFiles.length) {
+          void saveWorkspaceEntry(
+            "creator-files",
+            latestFiles.map(fileToStored),
+          );
+        } else {
+          void deleteWorkspaceEntry("creator-files");
+        }
+      }
+    },
+    [],
+  );
 
   const addFiles = (incoming: FileList | File[]) => {
     const valid = Array.from(incoming).filter((file) =>
@@ -401,6 +621,24 @@ export default function LutCreator({
               最低 {MIN_REFERENCE_IMAGES} 张 · 推荐 {RECOMMENDED_REFERENCE_IMAGES}–50
               张 · 无硬性上限
             </small>
+            <em
+              className={
+                creatorSaveStatus === "error" ||
+                creatorSaveStatus === "large"
+                  ? "creatorSaveBadge warning"
+                  : "creatorSaveBadge"
+              }
+            >
+              {creatorSaveStatus === "loading"
+                ? "正在恢复训练工作区"
+                : creatorSaveStatus === "saving"
+                  ? "正在自动保存"
+                  : creatorSaveStatus === "large"
+                    ? "照片超过 350 MB，仅保存结果"
+                    : creatorSaveStatus === "error"
+                      ? "自动保存失败"
+                      : "训练照片与结果已自动保存"}
+            </em>
           </div>
           <div className={remaining ? "datasetCount" : "datasetCount ready"}>
             <strong>{files.length}</strong>

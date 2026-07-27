@@ -41,6 +41,7 @@ type Preset = {
 type EditorSnapshot = {
   adjustments: Adjustments;
   presetId: string;
+  presetIntensity: number;
   intensity: number;
   lutName: string | null;
   lut: Lut3D | null;
@@ -68,79 +69,79 @@ const PRESETS: Preset[] = [
   {
     id: "portra-400",
     name: "Portra 400",
-    note: "光谱模拟 · 自然暖肤",
+    note: "光谱重制 v2 · 奶油暖肤",
     lutPath: "/luts/portra-400.cube",
-    defaultIntensity: 82,
+    defaultIntensity: 100,
     colors: ["#e2b68e", "#768d86"],
   },
   {
     id: "gold-200",
     name: "Kodak Gold 200",
-    note: "光谱模拟 · 金色日常",
+    note: "光谱重制 v2 · 浓郁金色",
     lutPath: "/luts/gold-200.cube",
-    defaultIntensity: 78,
+    defaultIntensity: 100,
     colors: ["#e8ad59", "#6d7e72"],
   },
   {
     id: "vision3-250d-2383",
     name: "Vision3 250D",
-    note: "2383 印片 · 电影日光",
+    note: "光谱重制 v2 · 2383 电影日光",
     lutPath: "/luts/vision3-250d-2383.cube",
-    defaultIntensity: 78,
+    defaultIntensity: 100,
     colors: ["#c87851", "#315a63"],
   },
   {
     id: "provia-100f",
     name: "Fuji Provia 100F",
-    note: "光谱模拟 · 透明自然",
+    note: "富士官方 LUT · 标准通透",
     lutPath: "/luts/provia-100f.cube",
-    defaultIntensity: 72,
+    defaultIntensity: 100,
     colors: ["#e1a05e", "#438397"],
   },
   {
     id: "velvia-50",
     name: "Fuji Velvia 50",
-    note: "光谱模拟 · 浓郁风光",
+    note: "富士官方 LUT · 浓郁风光",
     lutPath: "/luts/velvia-50.cube",
-    defaultIntensity: 68,
+    defaultIntensity: 85,
     colors: ["#e25744", "#1f637d"],
   },
   {
     id: "fuji-classic-chrome",
     name: "FUJI CC",
-    note: "Classic Chrome · 官方样片参考",
+    note: "富士官方 LUT · Classic Chrome",
     lutPath: "/luts/fuji-classic-chrome.cube",
-    defaultIntensity: 88,
+    defaultIntensity: 100,
     colors: ["#ac9a80", "#4e6870"],
   },
   {
     id: "fuji-nostalgic-neg",
     name: "FUJI NC",
-    note: "Nostalgic Neg. · 官方样片参考",
+    note: "Nostalgic Neg. · 强化琥珀青影",
     lutPath: "/luts/fuji-nostalgic-neg.cube",
-    defaultIntensity: 86,
+    defaultIntensity: 100,
     colors: ["#d29761", "#56756f"],
   },
   {
     id: "hasselblad-natural",
     name: "Hasselblad",
-    note: "HNCS 理念参考 · 自然层次",
+    note: "HNCS 强化参考 · 暖肤蓝调",
     lutPath: "/luts/hasselblad-natural.cube",
-    defaultIntensity: 92,
+    defaultIntensity: 100,
     colors: ["#cf916c", "#4f8490"],
   },
   {
     id: "leica-classic",
     name: "Leica Classic",
-    note: "官方 Look 参考 · 暖调电影感",
+    note: "Classic 强化参考 · 暖调褪洗",
     lutPath: "/luts/leica-classic.cube",
-    defaultIntensity: 88,
+    defaultIntensity: 100,
     colors: ["#b95d48", "#34454a"],
   },
   {
     id: "tri-x-400",
     name: "Kodak Tri-X 400",
-    note: "光谱模拟 · 经典黑白",
+    note: "光谱重制 v2 · 高反差黑白",
     lutPath: "/luts/tri-x-400.cube",
     defaultIntensity: 100,
     colors: ["#c8c7c2", "#2e2f32"],
@@ -237,6 +238,7 @@ export default function Home() {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [presetId, setPresetId] = useState("none");
+  const [presetIntensity, setPresetIntensity] = useState(0);
   const [presetLut, setPresetLut] = useState<Lut3D | null>(null);
   const [isPresetLoading, setIsPresetLoading] = useState(false);
   const [lutName, setLutName] = useState<string | null>(null);
@@ -326,6 +328,7 @@ export default function Home() {
   const currentSnapshot = (): EditorSnapshot => ({
     adjustments: { ...adjustments },
     presetId,
+    presetIntensity,
     intensity,
     lutName,
     lut,
@@ -348,6 +351,7 @@ export default function Home() {
   const restoreSnapshot = (snapshot: EditorSnapshot) => {
     setAdjustments(snapshot.adjustments);
     setPresetId(snapshot.presetId);
+    setPresetIntensity(snapshot.presetIntensity);
     setIntensity(snapshot.intensity);
     setLutName(snapshot.lutName);
     setLut(snapshot.lut);
@@ -385,6 +389,7 @@ export default function Home() {
       redoStack.current = [];
       syncHistoryState();
       setPresetId("none");
+      setPresetIntensity(0);
       setAdjustments(DEFAULTS);
       setZoom(100);
       setPan({ x: 0, y: 0 });
@@ -432,8 +437,8 @@ export default function Home() {
 
       let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       let pixelsChanged = false;
-      if (presetLut && !isShowingOriginal) {
-        imageData = applyLut(imageData, presetLut, preset.defaultIntensity);
+      if (presetLut && presetIntensity > 0 && !isShowingOriginal) {
+        imageData = applyLut(imageData, presetLut, presetIntensity);
         pixelsChanged = true;
       }
       if (lut && !isShowingOriginal && intensity > 0) {
@@ -452,7 +457,7 @@ export default function Home() {
     intensity,
     isShowingOriginal,
     lut,
-    preset.defaultIntensity,
+    presetIntensity,
     presetLut,
   ]);
 
@@ -507,6 +512,7 @@ export default function Home() {
   const reset = () => {
     remember();
     setPresetId("none");
+    setPresetIntensity(0);
     setAdjustments(DEFAULTS);
     setIntensity(100);
     setLutName(null);
@@ -563,15 +569,15 @@ export default function Home() {
       context.filter = filter;
       context.drawImage(image, 0, 0);
       context.filter = "none";
-      if (presetLut || (lut && intensity > 0)) {
+      if ((presetLut && presetIntensity > 0) || (lut && intensity > 0)) {
         let data = context.getImageData(
           0,
           0,
           exportCanvas.width,
           exportCanvas.height,
         );
-        if (presetLut) {
-          data = applyLut(data, presetLut, preset.defaultIntensity);
+        if (presetLut && presetIntensity > 0) {
+          data = applyLut(data, presetLut, presetIntensity);
         }
         if (lut && intensity > 0) data = applyLut(data, lut, intensity);
         context.putImageData(data, 0, 0);
@@ -705,7 +711,7 @@ export default function Home() {
                   ? lut
                     ? `${lut.size}³ LUT · ${intensity}%`
                     : presetLut
-                      ? `33³ 内置 LUT · ${preset.defaultIntensity}%`
+                      ? `33³ 内置 LUT · ${presetIntensity}%`
                       : "适合画面"
                   : "本地处理 · 不上传照片"}
             </span>
@@ -801,6 +807,7 @@ export default function Home() {
                     if (item.id === presetId) return;
                     remember();
                     setPresetId(item.id);
+                    setPresetIntensity(item.defaultIntensity);
                   }}
                 >
                   <span
@@ -925,6 +932,38 @@ export default function Home() {
                     value={intensity}
                     onPointerDown={remember}
                     onChange={(event) => setIntensity(Number(event.target.value))}
+                  />
+                </div>
+              )}
+
+              {preset.lutPath && (
+                <div className="activeLut">
+                  <div>
+                    <span className="statusDot" />
+                    <span title={preset.name}>{preset.name} · 内置预设</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      remember();
+                      setPresetId("none");
+                      setPresetIntensity(0);
+                    }}
+                  >
+                    关闭
+                  </button>
+                  <label>
+                    <span>预设强度</span>
+                    <output>{presetIntensity}%</output>
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={presetIntensity}
+                    onPointerDown={remember}
+                    onChange={(event) =>
+                      setPresetIntensity(Number(event.target.value))
+                    }
                   />
                 </div>
               )}

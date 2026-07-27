@@ -4,12 +4,20 @@ import {
   ChangeEvent,
   DragEvent,
   PointerEvent,
+  WheelEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  applyBeauty,
+  BEAUTY_DEFAULTS,
+  BeautySettings,
+  hasBeauty,
+  NATURAL_BEAUTY,
+} from "./beauty";
 import {
   applyLut,
   buildHistogram,
@@ -38,6 +46,7 @@ type Preset = {
 
 type EditorSnapshot = {
   adjustments: Adjustments;
+  beauty: BeautySettings;
   presetId: string;
   intensity: number;
   lutName: string | null;
@@ -97,6 +106,42 @@ const PRESETS: Preset[] = [
     filter: "grayscale(1) contrast(1.12) brightness(1.02)",
     colors: ["#c9c9c7", "#323234"],
   },
+  {
+    id: "portra400",
+    name: "Portra 400",
+    note: "炮塔 400 · 暖肤",
+    filter:
+      "brightness(1.045) contrast(.925) saturate(.94) sepia(.065) hue-rotate(352deg)",
+    colors: ["#e0b588", "#78918c"],
+  },
+  {
+    id: "hasselblad",
+    name: "Hasselblad",
+    note: "自然色彩 · 细腻层次",
+    filter:
+      "brightness(1.018) contrast(1.045) saturate(1.035) sepia(.018) hue-rotate(357deg)",
+    colors: ["#d69a6f", "#4d8290"],
+  },
+  {
+    id: "leica",
+    name: "Leica",
+    note: "浓郁德味 · 深邃红色",
+    filter:
+      "brightness(.995) contrast(1.115) saturate(1.025) sepia(.045) hue-rotate(350deg)",
+    colors: ["#b74e42", "#263c42"],
+  },
+];
+
+const BEAUTY_CONTROLS: Array<{
+  key: keyof BeautySettings;
+  label: string;
+  note: string;
+}> = [
+  { key: "smooth", label: "磨皮", note: "保留五官与肤色边缘" },
+  { key: "brighten", label: "美白", note: "提亮肤色，不漂白背景" },
+  { key: "faceSlim", label: "瘦脸", note: "局部柔性收窄面部轮廓" },
+  { key: "eyeBright", label: "亮眼", note: "自然提亮眼神光" },
+  { key: "rosy", label: "红润", note: "增加健康通透气色" },
 ];
 
 const CONTROL_GROUPS: Array<{
@@ -172,18 +217,31 @@ export default function Home() {
   const renderId = useRef(0);
   const undoStack = useRef<EditorSnapshot[]>([]);
   const redoStack = useRef<EditorSnapshot[]>([]);
+  const panStart = useRef<{
+    pointerX: number;
+    pointerY: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageReady, setImageReady] = useState(0);
   const [fileName, setFileName] = useState("未命名照片");
   const [dimensions, setDimensions] = useState("等待导入");
   const [isDragging, setIsDragging] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [isShowingOriginal, setIsShowingOriginal] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [presetId, setPresetId] = useState("none");
   const [lutName, setLutName] = useState<string | null>(null);
   const [lut, setLut] = useState<Lut3D | null>(null);
   const [intensity, setIntensity] = useState(100);
   const [adjustments, setAdjustments] = useState<Adjustments>(DEFAULTS);
-  const [activePanel, setActivePanel] = useState<"edit" | "presets">("edit");
+  const [beauty, setBeauty] = useState<BeautySettings>(BEAUTY_DEFAULTS);
+  const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
+  const [activePanel, setActivePanel] = useState<
+    "edit" | "beauty" | "presets"
+  >("edit");
   const [toast, setToast] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -214,6 +272,7 @@ export default function Home() {
 
   const currentSnapshot = (): EditorSnapshot => ({
     adjustments: { ...adjustments },
+    beauty: { ...beauty },
     presetId,
     intensity,
     lutName,
@@ -236,6 +295,7 @@ export default function Home() {
 
   const restoreSnapshot = (snapshot: EditorSnapshot) => {
     setAdjustments(snapshot.adjustments);
+    setBeauty(snapshot.beauty);
     setPresetId(snapshot.presetId);
     setIntensity(snapshot.intensity);
     setLutName(snapshot.lutName);
@@ -275,6 +335,10 @@ export default function Home() {
       syncHistoryState();
       setPresetId("none");
       setAdjustments(DEFAULTS);
+      setBeauty(BEAUTY_DEFAULTS);
+      setFaceDetected(null);
+      setZoom(100);
+      setPan({ x: 0, y: 0 });
     },
     [showToast],
   );
@@ -318,16 +382,28 @@ export default function Home() {
       context.filter = "none";
 
       let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      let pixelsChanged = false;
       if (lut && !isShowingOriginal && intensity > 0) {
         imageData = applyLut(imageData, lut, intensity);
-        context.putImageData(imageData, 0, 0);
+        pixelsChanged = true;
       }
+      if (!isShowingOriginal && hasBeauty(beauty)) {
+        const result = applyBeauty(imageData, beauty);
+        imageData = result.imageData;
+        pixelsChanged = true;
+        setFaceDetected((current) =>
+          current === result.faceDetected ? current : result.faceDetected,
+        );
+      } else if (!hasBeauty(beauty)) {
+        setFaceDetected(null);
+      }
+      if (pixelsChanged) context.putImageData(imageData, 0, 0);
       if (!isShowingOriginal) setHistogram(buildHistogram(imageData));
       setIsRendering(false);
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [filter, imageReady, intensity, isShowingOriginal, lut]);
+  }, [beauty, filter, imageReady, intensity, isShowingOriginal, lut]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -335,17 +411,73 @@ export default function Home() {
     loadImage(event.dataTransfer.files[0]);
   };
 
+  const changeZoom = (nextZoom: number) => {
+    const clamped = Math.max(50, Math.min(400, Math.round(nextZoom)));
+    setZoom(clamped);
+    if (clamped === 100) setPan({ x: 0, y: 0 });
+  };
+
+  const onCanvasWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (!imageUrl) return;
+    event.preventDefault();
+    const step = event.deltaY > 0 ? -10 : 10;
+    setZoom((current) => Math.max(50, Math.min(400, current + step)));
+  };
+
+  const startPan = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!imageUrl) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panStart.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    setIsPanning(true);
+  };
+
+  const movePan = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!panStart.current) return;
+    setPan({
+      x: panStart.current.panX + event.clientX - panStart.current.pointerX,
+      y: panStart.current.panY + event.clientY - panStart.current.pointerY,
+    });
+  };
+
+  const endPan = () => {
+    panStart.current = null;
+    setIsPanning(false);
+  };
+
   const updateAdjustment = (key: keyof Adjustments, value: number) => {
     setAdjustments((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateBeauty = (key: keyof BeautySettings, value: number) => {
+    setBeauty((current) => ({ ...current, [key]: value }));
+  };
+
+  const applyNaturalBeauty = () => {
+    if (!imageUrl) {
+      showToast("请先导入一张人像照片");
+      return;
+    }
+    remember();
+    setBeauty(NATURAL_BEAUTY);
+    showToast("已应用自然美颜，正在检测面部…");
   };
 
   const reset = () => {
     remember();
     setPresetId("none");
     setAdjustments(DEFAULTS);
+    setBeauty(BEAUTY_DEFAULTS);
+    setFaceDetected(null);
     setIntensity(100);
     setLutName(null);
     setLut(null);
+    setZoom(100);
+    setPan({ x: 0, y: 0 });
     showToast("已还原全部调整");
   };
 
@@ -392,14 +524,16 @@ export default function Home() {
       context.filter = filter;
       context.drawImage(image, 0, 0);
       context.filter = "none";
-      if (lut && intensity > 0) {
-        const data = context.getImageData(
+      if ((lut && intensity > 0) || hasBeauty(beauty)) {
+        let data = context.getImageData(
           0,
           0,
           exportCanvas.width,
           exportCanvas.height,
         );
-        context.putImageData(applyLut(data, lut, intensity), 0, 0);
+        if (lut && intensity > 0) data = applyLut(data, lut, intensity);
+        if (hasBeauty(beauty)) data = applyBeauty(data, beauty).imageData;
+        context.putImageData(data, 0, 0);
       }
       const blob = await new Promise<Blob | null>((resolve) =>
         exportCanvas.toBlob(resolve, "image/jpeg", 0.95),
@@ -499,6 +633,15 @@ export default function Home() {
             <span className="railGlyph gridGlyph" />
             <small>滤镜</small>
           </button>
+          <button
+            className={
+              activePanel === "beauty" ? "railButton active" : "railButton"
+            }
+            onClick={() => setActivePanel("beauty")}
+          >
+            <span className="railGlyph faceGlyph" />
+            <small>美颜</small>
+          </button>
           <div className="railSpacer" />
           <button
             className="railButton importRail"
@@ -532,8 +675,56 @@ export default function Home() {
             </span>
           </div>
 
-          <div className={`canvasFrame ${imageUrl ? "hasImage" : ""}`}>
-            <canvas ref={canvasRef} />
+          <div
+            className={`canvasFrame ${imageUrl ? "hasImage" : ""} ${
+              isPanning ? "isPanning" : ""
+            }`}
+            onWheel={onCanvasWheel}
+          >
+            <canvas
+              ref={canvasRef}
+              aria-label="可拖拽移动的照片画布"
+              onPointerDown={startPan}
+              onPointerMove={movePan}
+              onPointerUp={endPan}
+              onPointerCancel={endPan}
+              onDoubleClick={() => {
+                setZoom(100);
+                setPan({ x: 0, y: 0 });
+              }}
+              style={{
+                transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom / 100})`,
+              }}
+            />
+            {imageUrl && (
+              <>
+                <div className="viewerControls">
+                  <button
+                    aria-label="缩小"
+                    onClick={() => changeZoom(zoom - 10)}
+                  >
+                    −
+                  </button>
+                  <output>{zoom}%</output>
+                  <button
+                    aria-label="放大"
+                    onClick={() => changeZoom(zoom + 10)}
+                  >
+                    ＋
+                  </button>
+                  <button
+                    className="fitButton"
+                    onClick={() => {
+                      setZoom(100);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                  >
+                    适合
+                  </button>
+                </div>
+                <div className="panHint">拖拽移动 · 滚轮缩放 · 双击复位</div>
+              </>
+            )}
             {!imageUrl && (
               <button
                 className="emptyState"
@@ -603,6 +794,12 @@ export default function Home() {
               调整
             </button>
             <button
+              className={activePanel === "beauty" ? "active" : ""}
+              onClick={() => setActivePanel("beauty")}
+            >
+              美颜
+            </button>
+            <button
               className={activePanel === "presets" ? "active" : ""}
               onClick={() => setActivePanel("presets")}
             >
@@ -635,6 +832,88 @@ export default function Home() {
                   <small>65×65×65</small>
                 </div>
               </div>
+            </div>
+          ) : activePanel === "beauty" ? (
+            <div className="beautyPanel">
+              <div className="beautyHero">
+                <span className="beautyFaceIcon" aria-hidden="true">
+                  <i />
+                </span>
+                <div>
+                  <strong>智能人像美颜</strong>
+                  <small>
+                    {!hasBeauty(beauty)
+                      ? "等待启用"
+                      : faceDetected === true
+                        ? "已锁定主要面部"
+                        : faceDetected === false
+                          ? "未识别到清晰面部"
+                          : "正在分析画面"}
+                  </small>
+                </div>
+                <span
+                  className={`beautyStatus ${
+                    faceDetected === true ? "detected" : ""
+                  }`}
+                />
+              </div>
+
+              <button
+                className="autoBeautyButton"
+                onClick={applyNaturalBeauty}
+                disabled={!imageUrl}
+              >
+                <span>✦</span>
+                <div>
+                  <strong>一键自然美颜</strong>
+                  <small>自动磨皮、美白、瘦脸与亮眼</small>
+                </div>
+              </button>
+
+              <div className="beautyPrivacy">
+                <i className="privacyDot" />
+                面部分析和修图全部在本机完成
+              </div>
+
+              <div className="beautyControls">
+                <div className="beautyControlHeading">
+                  <strong>精细调整</strong>
+                  <button
+                    onClick={() => {
+                      if (!hasBeauty(beauty)) return;
+                      remember();
+                      setBeauty(BEAUTY_DEFAULTS);
+                      setFaceDetected(null);
+                    }}
+                  >
+                    全部清除
+                  </button>
+                </div>
+                {BEAUTY_CONTROLS.map((item) => (
+                  <label className="beautySlider" key={item.key}>
+                    <span>
+                      <strong>{item.label}</strong>
+                      <small>{item.note}</small>
+                    </span>
+                    <output>{beauty[item.key]}</output>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={beauty[item.key]}
+                      disabled={!imageUrl}
+                      onPointerDown={remember}
+                      onDoubleClick={() => updateBeauty(item.key, 0)}
+                      onChange={(event) =>
+                        updateBeauty(item.key, Number(event.target.value))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="beautyFootnote">
+                建议自然人像将瘦脸控制在 35 以下；双击任一滑杆可归零。
+              </p>
             </div>
           ) : (
             <>
@@ -758,7 +1037,7 @@ export default function Home() {
         <span>照片不会上传至服务器</span>
         <span className="statusSpacer" />
         <span>sRGB</span>
-        <span>100%</span>
+        <span>{zoom}%</span>
       </footer>
 
       <input

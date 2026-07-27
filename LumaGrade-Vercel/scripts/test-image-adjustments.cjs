@@ -141,7 +141,7 @@ function main() {
     aiDelta.highlights !== -40 ||
     aiDelta.temperature !== 35
   ) {
-    throw new Error("GPT correction safety bounds were not enforced");
+    throw new Error("AI correction safety bounds were not enforced");
   }
 
   const lutData = new Float32Array(33 ** 3 * 3);
@@ -187,6 +187,69 @@ function main() {
     throw new Error("GPT scan did not influence the LUT");
   }
 
+  const onlineReference = {
+    query: "Leica M9",
+    matchedReference: "Leica M9",
+    category: "camera",
+    confidence: 88,
+    sourceQuality: 82,
+    traits: {
+      temperature: 8,
+      tint: 5,
+      saturation: 7,
+      contrast: 9,
+      shadows: -3,
+      highlights: -7,
+      redBias: 5,
+      greenBias: -2,
+      blueBias: -3,
+    },
+    signature: {
+      skinTone: "warm",
+      greens: "restrained",
+      blues: "deep",
+      reds: "clear",
+      highlightRollOff: "firm",
+      shadowColor: "slightly cool",
+      contrastCurve: "moderate",
+    },
+    rationale: "repeated source consensus",
+    consensus: ["warm skin and distinct reds"],
+    limitations: [],
+    sources: [
+      { title: "Official", url: "https://example.com/1", domain: "example.com" },
+      { title: "Review", url: "https://example.org/2", domain: "example.org" },
+      { title: "Review 2", url: "https://example.net/3", domain: "example.net" },
+    ],
+  };
+  const referenced = ai.refineLutWithOnlineReference(result, onlineReference);
+  let referenceDelta = 0;
+  for (let index = 0; index < lutData.length; index += 1) {
+    const value = referenced.lut.data[index];
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error("Online-reference LUT escaped the valid [0, 1] range");
+    }
+    referenceDelta += Math.abs(value - lutData[index]);
+  }
+  const meanReferenceDelta = referenceDelta / lutData.length;
+  if (meanReferenceDelta < 0.00003 || meanReferenceDelta > 0.02) {
+    throw new Error(
+      `Online reference influence is outside its low-weight bounds: ${meanReferenceDelta}`,
+    );
+  }
+
+  const uncertain = ai.refineLutWithOnlineReference(result, {
+    ...onlineReference,
+    matchedReference: "ambiguous",
+    category: "unknown",
+    confidence: 24,
+    sourceQuality: 18,
+    sources: [],
+  });
+  if (uncertain.lut.data !== result.lut.data) {
+    throw new Error("Uncertain online reference should not modify LUT data");
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -202,6 +265,7 @@ function main() {
         shadowAfter: Number(shadowStats.shadow.toFixed(3)),
         warmChannelShift: Number(warmStats.redMinusBlue.toFixed(3)),
         meanLutDelta: Number((lutDelta / lutData.length).toFixed(5)),
+        meanReferenceDelta: Number(meanReferenceDelta.toFixed(5)),
       },
       null,
       2,

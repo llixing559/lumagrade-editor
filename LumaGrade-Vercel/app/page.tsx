@@ -31,6 +31,13 @@ import {
   aiGradeToAdjustments,
 } from "./ai-grade";
 import {
+  AiConnection,
+  EMPTY_AI_CONNECTION,
+  connectionForRequest,
+  detectAiProvider,
+  isAiConnectionReady,
+} from "./ai-providers";
+import {
   AdjustmentValues,
   addAdjustments,
   applyImageAdjustments,
@@ -39,6 +46,7 @@ import {
   hasAdjustments,
 } from "./image-adjustments";
 import LutCreator from "./LutCreator";
+import AiConnectionPanel from "./AiConnectionPanel";
 
 type Adjustments = AdjustmentValues;
 
@@ -276,6 +284,8 @@ export default function Home() {
     enabled: false,
     model: null,
   });
+  const [aiConnection, setAiConnection] =
+    useState<AiConnection>(EMPTY_AI_CONNECTION);
   const [gptAssistEnabled, setGptAssistEnabled] = useState(false);
   const [isGptAnalyzing, setIsGptAnalyzing] = useState(false);
   const [gptAdvice, setGptAdvice] = useState<AiGradeAdvice | null>(null);
@@ -292,6 +302,14 @@ export default function Home() {
   const preset = useMemo(
     () => PRESETS.find((item) => item.id === presetId) ?? PRESETS[0],
     [presetId],
+  );
+  const aiProvider = useMemo(
+    () => detectAiProvider(aiConnection),
+    [aiConnection],
+  );
+  const aiAvailable = useMemo(
+    () => isAiConnectionReady(aiConfig, aiConnection),
+    [aiConfig, aiConnection],
   );
 
   const adjustments = useMemo(
@@ -329,7 +347,7 @@ export default function Home() {
     const controller = new AbortController();
     fetch("/api/ai-grade", { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error("无法读取 GPT 配置");
+        if (!response.ok) throw new Error("无法读取 AI 配置");
         return (await response.json()) as AiConfig;
       })
       .then((config) => setAiConfig(config))
@@ -560,7 +578,7 @@ export default function Home() {
 
           if (
             gptAssistEnabled &&
-            aiConfig.enabled &&
+            aiAvailable &&
             analysisId === adaptiveAnalysisId.current
           ) {
             setIsGptAnalyzing(true);
@@ -568,7 +586,7 @@ export default function Home() {
             candidateCanvas.width = analysisCanvas.width;
             candidateCanvas.height = analysisCanvas.height;
             const candidateContext = candidateCanvas.getContext("2d");
-            if (!candidateContext) throw new Error("无法创建 GPT 预览画布");
+            if (!candidateContext) throw new Error("无法创建 AI 预览画布");
             let candidate = copyImageData(data);
             candidate = applyAdaptiveInput(candidate, profile);
             for (const layer of activeLutLayers) {
@@ -581,10 +599,13 @@ export default function Home() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 mode: "grade",
-                images: [
-                  analysisCanvas.toDataURL("image/jpeg", 0.78),
-                  candidateCanvas.toDataURL("image/jpeg", 0.78),
-                ],
+                images: aiProvider.supportsVision
+                  ? [
+                      analysisCanvas.toDataURL("image/jpeg", 0.78),
+                      candidateCanvas.toDataURL("image/jpeg", 0.78),
+                    ]
+                  : [],
+                connection: connectionForRequest(aiConnection),
                 metadata: {
                   preset: preset.name,
                   presetIntensity,
@@ -608,7 +629,7 @@ export default function Home() {
               result?: AiGradeAdvice;
             };
             if (!response.ok || !payload.result) {
-              throw new Error(payload.error || "GPT 云端复核失败");
+              throw new Error(payload.error || "AI 智能复核失败");
             }
             if (analysisId === adaptiveAnalysisId.current) {
               setGptAdvice(payload.result);
@@ -649,7 +670,9 @@ export default function Home() {
   }, [
     activeLutLayers,
     adaptiveAnalysisVersion,
-    aiConfig.enabled,
+    aiAvailable,
+    aiConnection,
+    aiProvider.supportsVision,
     autoAdaptEnabled,
     gptAssistEnabled,
     imageReady,
@@ -957,7 +980,7 @@ export default function Home() {
                     : isAnalyzingAdaptation
                       ? "智能分析…"
                       : isGptAnalyzing
-                        ? "GPT 复核…"
+                        ? "AI 复核…"
                       : "导出"}
               </button>
             </>
@@ -1005,6 +1028,8 @@ export default function Home() {
         {activePanel === "creator" ? (
           <LutCreator
             aiConfig={aiConfig}
+            aiConnection={aiConnection}
+            onAiConnectionChange={setAiConnection}
             showToast={showToast}
             onExit={() => setActivePanel("edit")}
             onUseLut={(trainedLut) => {
@@ -1355,6 +1380,12 @@ export default function Home() {
                               重新分析
                             </button>
                           </div>
+                          <AiConnectionPanel
+                            config={aiConfig}
+                            value={aiConnection}
+                            onChange={setAiConnection}
+                            compact
+                          />
                           <div
                             className={
                               gptAssistEnabled
@@ -1363,20 +1394,24 @@ export default function Home() {
                             }
                           >
                             <div>
-                              <span>GPT 云端复核</span>
+                              <span>AI 智能复核</span>
                               <small>
-                                {aiConfig.enabled
-                                  ? `${aiConfig.model} · 上传两张压缩预览`
-                                  : "部署端尚未配置 OPENAI_API_KEY"}
+                                {aiAvailable
+                                  ? `${aiProvider.label} · ${
+                                      aiProvider.supportsVision
+                                        ? "上传两张压缩预览"
+                                        : "仅发送本地统计"
+                                    }`
+                                  : "请选择接口并填写 API Key 与模型"}
                               </small>
                             </div>
                             <button
                               role="switch"
                               aria-checked={gptAssistEnabled}
-                              disabled={!aiConfig.enabled}
+                              disabled={!aiAvailable}
                               onClick={() => {
-                                if (!aiConfig.enabled) {
-                                  showToast("请先在 Vercel 配置 OpenAI API Key");
+                                if (!aiAvailable) {
+                                  showToast("请先填写可用的 AI API 接口、密钥和模型");
                                   return;
                                 }
                                 const next = !gptAssistEnabled;
@@ -1393,7 +1428,7 @@ export default function Home() {
                           {isGptAnalyzing && (
                             <div className="gptStatus">
                               <i />
-                              GPT 正在复核曝光、白平衡和反差…
+                              {aiProvider.label} 正在复核曝光、白平衡和反差…
                             </div>
                           )}
                           {gptAdvice && !isGptAnalyzing && (
@@ -1546,9 +1581,11 @@ export default function Home() {
         </span>
         <span>
           {activePanel === "creator"
-            ? "本地训练；启用 GPT 后仅上传代表性压缩预览"
+            ? "本地训练；启用 AI 后按模型能力发送预览或聚合统计"
             : gptAssistEnabled
-              ? "GPT 开启时会上传原片与结果的压缩预览"
+              ? aiProvider.supportsVision
+                ? `AI 开启：压缩预览将发送至 ${aiProvider.label}`
+                : `AI 开启：仅发送聚合统计至 ${aiProvider.label}`
               : "照片不会上传至服务器"}
         </span>
         <span className="statusSpacer" />

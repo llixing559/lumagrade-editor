@@ -11,8 +11,17 @@ import type { Lut3D } from "./lut";
 import {
   AiConfig,
   AiLutScanAdvice,
+  OnlineReference,
   refineLutWithAiScan,
+  refineLutWithOnlineReference,
 } from "./ai-grade";
+import {
+  AiConnection,
+  connectionForRequest,
+  detectAiProvider,
+  isAiConnectionReady,
+} from "./ai-providers";
+import AiConnectionPanel from "./AiConnectionPanel";
 import {
   LutTrainingResult,
   MIN_REFERENCE_IMAGES,
@@ -24,12 +33,14 @@ import {
 
 type LutCreatorProps = {
   aiConfig: AiConfig;
+  aiConnection: AiConnection;
+  onAiConnectionChange: (connection: AiConnection) => void;
   onUseLut: (lut: Lut3D) => void;
   onExit: () => void;
   showToast: (message: string) => void;
 };
 
-const MAX_GPT_SCAN_IMAGES = 8;
+const MAX_AI_SCAN_IMAGES = 8;
 
 async function createCloudPreview(file: File, signal: AbortSignal) {
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -59,7 +70,7 @@ async function createCloudPreview(file: File, signal: AbortSignal) {
 }
 
 function representativeFiles(files: File[]) {
-  const count = Math.min(MAX_GPT_SCAN_IMAGES, files.length);
+  const count = Math.min(MAX_AI_SCAN_IMAGES, files.length);
   if (count === files.length) return files;
   return Array.from({ length: count }, (_, index) => {
     const position =
@@ -88,6 +99,13 @@ function confidenceLabel(confidence: number) {
   return "建议补样";
 }
 
+function analysisLabel(reference: boolean, scan: boolean) {
+  if (reference && scan) return "本地 + 联网 + AI";
+  if (reference) return "本地 + 联网";
+  if (scan) return "本地 + AI";
+  return "逐张取样";
+}
+
 function Metric({
   label,
   value,
@@ -112,6 +130,8 @@ function Metric({
 
 export default function LutCreator({
   aiConfig,
+  aiConnection,
+  onAiConnectionChange,
   onUseLut,
   onExit,
   showToast,
@@ -121,6 +141,10 @@ export default function LutCreator({
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
+  const [onlineReferenceEnabled, setOnlineReferenceEnabled] = useState(false);
+  const [isReferenceSearching, setIsReferenceSearching] = useState(false);
+  const [onlineReference, setOnlineReference] =
+    useState<OnlineReference | null>(null);
   const [gptScanEnabled, setGptScanEnabled] = useState(false);
   const [isGptScanning, setIsGptScanning] = useState(false);
   const [gptScanAdvice, setGptScanAdvice] =
@@ -128,6 +152,14 @@ export default function LutCreator({
   const [progress, setProgress] = useState<TrainingProgress | null>(null);
   const [result, setResult] = useState<LutTrainingResult | null>(null);
   const [projectName, setProjectName] = useState("我的专属色彩");
+  const aiProvider = useMemo(
+    () => detectAiProvider(aiConnection),
+    [aiConnection],
+  );
+  const aiAvailable = useMemo(
+    () => isAiConnectionReady(aiConfig, aiConnection),
+    [aiConfig, aiConnection],
+  );
 
   const totalSize = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
@@ -156,6 +188,7 @@ export default function LutCreator({
     setResult(null);
     setProgress(null);
     setGptScanAdvice(null);
+    setOnlineReference(null);
     if (invalidCount) showToast(`${invalidCount} 个不支持的文件已跳过`);
   };
 
@@ -175,6 +208,7 @@ export default function LutCreator({
     setFiles((current) => current.filter((file) => file !== target));
     setResult(null);
     setGptScanAdvice(null);
+    setOnlineReference(null);
   };
 
   const train = async () => {
@@ -183,7 +217,9 @@ export default function LutCreator({
     abortController.current = controller;
     setIsTraining(true);
     setIsGptScanning(false);
+    setIsReferenceSearching(false);
     setGptScanAdvice(null);
+    setOnlineReference(null);
     setResult(null);
     setProgress({
       phase: "decode",
@@ -199,19 +235,69 @@ export default function LutCreator({
         controller.signal,
       );
       let finalResult = trained;
-      if (gptScanEnabled && aiConfig.enabled) {
+      if (onlineReferenceEnabled && aiAvailable && aiProvider.supportsSearch) {
+        setIsReferenceSearching(true);
+        try {
+          const response = await fetch("/api/ai-grade", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "reference-search",
+              connection: connectionForRequest(aiConnection),
+              metadata: {
+                projectName: projectName.trim(),
+                totalImages: files.length,
+                metrics: trained.metrics,
+                toneCurve: trained.toneCurve.filter(
+                  (_, index) => index % 32 === 0,
+                ),
+                hueResponse: trained.hueResponse,
+                saturationResponse: trained.saturationResponse,
+              },
+            }),
+            signal: controller.signal,
+          });
+          const payload = (await response.json()) as {
+            error?: string;
+            result?: OnlineReference;
+          };
+          if (!response.ok || !payload.result) {
+            throw new Error(payload.error || "联网参考匹配失败");
+          }
+          setOnlineReference(payload.result);
+          finalResult = refineLutWithOnlineReference(
+            finalResult,
+            payload.result,
+          );
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          showToast(
+            `${error instanceof Error ? error.message : "联网参考匹配失败"}，已保留本地模型`,
+          );
+        } finally {
+          setIsReferenceSearching(false);
+        }
+      }
+      if (gptScanEnabled && aiAvailable) {
         setIsGptScanning(true);
         try {
-          const scanFiles = representativeFiles(files);
-          const images = await Promise.all(
-            scanFiles.map((file) => createCloudPreview(file, controller.signal)),
-          );
+          const scanFiles = aiProvider.supportsVision
+            ? representativeFiles(files)
+            : [];
+          const images = aiProvider.supportsVision
+            ? await Promise.all(
+                scanFiles.map((file) =>
+                  createCloudPreview(file, controller.signal),
+                ),
+              )
+            : [];
           const response = await fetch("/api/ai-grade", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               mode: "lut-scan",
               images,
+              connection: connectionForRequest(aiConnection),
               metadata: {
                 projectName: projectName.trim(),
                 totalImages: files.length,
@@ -231,14 +317,14 @@ export default function LutCreator({
             result?: AiLutScanAdvice;
           };
           if (!response.ok || !payload.result) {
-            throw new Error(payload.error || "GPT LUT 扫描失败");
+            throw new Error(payload.error || "AI LUT 扫描失败");
           }
           setGptScanAdvice(payload.result);
-          finalResult = refineLutWithAiScan(trained, payload.result);
+          finalResult = refineLutWithAiScan(finalResult, payload.result);
         } catch (error) {
           if (controller.signal.aborted) throw error;
           showToast(
-            `${error instanceof Error ? error.message : "GPT 扫描失败"}，已保留本地模型`,
+            `${error instanceof Error ? error.message : "AI 扫描失败"}，已保留本地模型`,
           );
         } finally {
           setIsGptScanning(false);
@@ -256,6 +342,7 @@ export default function LutCreator({
       abortController.current = null;
       setIsTraining(false);
       setIsGptScanning(false);
+      setIsReferenceSearching(false);
     }
   };
 
@@ -347,12 +434,20 @@ export default function LutCreator({
           </div>
           <div>
             <span>分析方式</span>
-            <strong>{gptScanEnabled ? "本地 + GPT" : "逐张取样"}</strong>
+            <strong>
+              {analysisLabel(onlineReferenceEnabled, gptScanEnabled)}
+            </strong>
           </div>
           <div>
             <span>隐私</span>
             <strong>
-              {gptScanEnabled ? `上传至多 ${MAX_GPT_SCAN_IMAGES} 张预览` : "本地处理"}
+              {gptScanEnabled
+                ? aiProvider.supportsVision
+                  ? `上传至多 ${MAX_AI_SCAN_IMAGES} 张预览`
+                  : "仅发送本地聚合统计"
+                : onlineReferenceEnabled
+                  ? "仅发送名称与统计"
+                  : "本地处理"}
             </strong>
           </div>
         </div>
@@ -367,6 +462,8 @@ export default function LutCreator({
                   setFiles([]);
                   setResult(null);
                   setProgress(null);
+                  setOnlineReference(null);
+                  setGptScanAdvice(null);
                 }}
               >
                 清空
@@ -406,7 +503,11 @@ export default function LutCreator({
           <div className="trainingProgress" aria-live="polite">
             <div>
               <span>
-                {progress?.phase === "decode"
+                {isReferenceSearching
+                  ? "正在联网匹配同名色彩参考"
+                  : isGptScanning
+                    ? `${aiProvider.label} 正在智能扫描`
+                    : progress?.phase === "decode"
                   ? "正在校准色彩样本"
                   : progress?.phase === "solve"
                     ? "正在求解色彩模型"
@@ -418,7 +519,13 @@ export default function LutCreator({
               <b style={{ width: `${progressValue(progress)}%` }} />
             </i>
             <small title={progress?.fileName}>
-              {progress?.phase === "decode"
+              {isReferenceSearching
+                ? "检索官方资料、专业评测与可复核的色彩共识"
+                : isGptScanning
+                  ? aiProvider.supportsVision
+                    ? `正在复核最多 ${MAX_AI_SCAN_IMAGES} 张压缩预览`
+                    : "正在依据本地聚合统计复核色彩模型"
+                  : progress?.phase === "decode"
                 ? `${progress.completed + 1}/${progress.total} · ${progress.fileName ?? ""}`
                 : progress?.phase === "solve"
                   ? "阶调、色相响应与色彩分离模型"
@@ -446,8 +553,12 @@ export default function LutCreator({
             <strong>松开，加入训练数据集</strong>
             <span>
               {gptScanEnabled
-                ? "仅上传代表性压缩预览用于 GPT 扫描"
-                : "照片不会上传到服务器"}
+                ? aiProvider.supportsVision
+                  ? `仅上传代表性压缩预览至 ${aiProvider.label}`
+                  : `仅发送聚合统计至 ${aiProvider.label}`
+                : onlineReferenceEnabled
+                  ? "照片不上传；联网阶段只发送名称与聚合统计"
+                  : "照片不会上传到服务器"}
             </span>
           </div>
         )}
@@ -481,9 +592,62 @@ export default function LutCreator({
             value={projectName}
             maxLength={48}
             disabled={isTraining}
-            onChange={(event) => setProjectName(event.target.value)}
+            onChange={(event) => {
+              setProjectName(event.target.value);
+              setResult(null);
+              setOnlineReference(null);
+              setGptScanAdvice(null);
+            }}
           />
         </label>
+
+        <AiConnectionPanel
+          config={aiConfig}
+          value={aiConnection}
+          onChange={onAiConnectionChange}
+          disabled={isTraining}
+        />
+
+        <div
+          className={
+            onlineReferenceEnabled
+              ? "creatorAiOption reference enabled"
+              : "creatorAiOption reference"
+          }
+        >
+          <div>
+            <strong>联网参考匹配</strong>
+            <small>
+              {aiAvailable
+                ? aiProvider.supportsSearch
+                  ? `${aiProvider.label} · 只发送名称与本地统计`
+                  : `${aiProvider.label} 未接入可验证的联网搜索`
+                : "请先填写可用的 AI 接口"}
+            </small>
+          </div>
+          <button
+            role="switch"
+            aria-checked={onlineReferenceEnabled}
+            disabled={
+              !aiAvailable || !aiProvider.supportsSearch || isTraining
+            }
+            onClick={() => {
+              if (!aiAvailable) {
+                showToast("请先填写可用的 AI API 接口、密钥和模型");
+                return;
+              }
+              if (!aiProvider.supportsSearch) {
+                showToast("联网参考目前支持 OpenAI 与 Gemini 官方接口");
+                return;
+              }
+              setOnlineReferenceEnabled((current) => !current);
+              setResult(null);
+              setOnlineReference(null);
+            }}
+          >
+            <i />
+          </button>
+        </div>
 
         <div
           className={
@@ -491,20 +655,24 @@ export default function LutCreator({
           }
         >
           <div>
-            <strong>GPT 云端样本扫描</strong>
+            <strong>AI 智能扫描</strong>
             <small>
-              {aiConfig.enabled
-                ? `${aiConfig.model} · 最多扫描 ${MAX_GPT_SCAN_IMAGES} 张代表性预览`
-                : "部署端尚未配置 OPENAI_API_KEY"}
+              {aiAvailable
+                ? `${aiProvider.label} · ${
+                    aiProvider.supportsVision
+                      ? `最多 ${MAX_AI_SCAN_IMAGES} 张代表性预览`
+                      : "统计模式，不上传照片"
+                  }`
+                : "请先填写可用的 AI 接口"}
             </small>
           </div>
           <button
             role="switch"
             aria-checked={gptScanEnabled}
-            disabled={!aiConfig.enabled || isTraining}
+            disabled={!aiAvailable || isTraining}
             onClick={() => {
-              if (!aiConfig.enabled) {
-                showToast("请先在 Vercel 配置 OpenAI API Key");
+              if (!aiAvailable) {
+                showToast("请先填写可用的 AI API 接口、密钥和模型");
                 return;
               }
               setGptScanEnabled((current) => !current);
@@ -525,6 +693,9 @@ export default function LutCreator({
                 <li>尽量包含人像、自然、城市和室内场景</li>
                 <li>同时提供高光、正常曝光与暗光画面</li>
                 <li>不要混入黑白照片或完全不同的滤镜</li>
+                {onlineReferenceEnabled && (
+                  <li>名称请写具体型号或风格，例如“徕卡 M9”</li>
+                )}
               </ul>
             </div>
             <div className="creatorScope">
@@ -541,10 +712,43 @@ export default function LutCreator({
               <strong>{result.metrics.confidence}</strong>
               <small>/ 100</small>
             </div>
+            {onlineReference && (
+              <div className="creatorReferenceResult">
+                <div>
+                  <span>联网匹配</span>
+                  <strong>{onlineReference.matchedReference}</strong>
+                  <em>{Math.round(onlineReference.confidence)}%</em>
+                </div>
+                <p>{onlineReference.rationale}</p>
+                {onlineReference.consensus.length > 0 && (
+                  <ul>
+                    {onlineReference.consensus.slice(0, 3).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
+                {onlineReference.sources.length > 0 && (
+                  <div className="creatorReferenceSources">
+                    {onlineReference.sources.slice(0, 4).map((source) => (
+                      <a
+                        href={source.url}
+                        key={source.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        title={source.title}
+                      >
+                        {source.domain}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {gptScanAdvice && (
               <div className="creatorAiResult">
                 <span>
-                  GPT 一致性 {Math.round(gptScanAdvice.coherence)}% · 复核可信度{" "}
+                  {aiProvider.label} 一致性{" "}
+                  {Math.round(gptScanAdvice.coherence)}% · 复核可信度{" "}
                   {Math.round(gptScanAdvice.confidence)}%
                 </span>
                 <p>{gptScanAdvice.rationale}</p>
@@ -633,8 +837,10 @@ export default function LutCreator({
               onClick={train}
             >
               {isTraining
-                ? isGptScanning
-                  ? "GPT 正在扫描样本…"
+                ? isReferenceSearching
+                  ? "正在联网匹配参考…"
+                  : isGptScanning
+                  ? "AI 正在扫描样本…"
                   : "正在训练…"
                 : remaining
                   ? `还需 ${remaining} 张照片`

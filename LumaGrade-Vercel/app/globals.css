@@ -811,6 +811,223 @@ input:focus-visible {
   font-size: 8px;
 }
 
+.adaptiveCard {
+  margin: 13px 14px 2px;
+  overflow: hidden;
+  border: 1px solid #34363b;
+  border-radius: 9px;
+  background: #1c1d21;
+}
+
+.adaptiveCard.enabled {
+  border-color: rgba(102, 227, 188, 0.28);
+  background:
+    linear-gradient(135deg, rgba(102, 227, 188, 0.06), transparent 45%),
+    #1b1d20;
+}
+
+.adaptiveHeader,
+.adaptiveHeader > div,
+.adaptiveFooter,
+.adaptiveProtection {
+  display: flex;
+  align-items: center;
+}
+
+.adaptiveHeader {
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.adaptiveHeader > div {
+  min-width: 0;
+  gap: 8px;
+}
+
+.adaptiveHeader > div > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.adaptiveHeader strong {
+  color: #d7d9dc;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.adaptiveHeader small {
+  color: #6d7077;
+  font-size: 7px;
+}
+
+.adaptiveMark {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgba(102, 227, 188, 0.3);
+  border-radius: 7px;
+  background: rgba(102, 227, 188, 0.08);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 750;
+  font-style: italic;
+}
+
+.adaptiveSwitch {
+  position: relative;
+  width: 31px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  border-radius: 12px;
+  background: #3a3c41;
+  cursor: pointer;
+  transition: background 0.18s ease-out;
+}
+
+.adaptiveSwitch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #a5a8ad;
+  transition:
+    left 0.18s ease-out,
+    background 0.18s ease-out;
+}
+
+.adaptiveCard.enabled .adaptiveSwitch {
+  background: rgba(102, 227, 188, 0.35);
+}
+
+.adaptiveCard.enabled .adaptiveSwitch i {
+  left: 16px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(102, 227, 188, 0.4);
+}
+
+.adaptiveLoading {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 10px 10px;
+  padding: 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  color: #7c8884;
+  font-size: 7px;
+}
+
+.adaptiveLoading > i {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 1px solid #4b514f;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: adaptiveSpin 0.8s linear infinite;
+}
+
+.adaptiveLoading.failed {
+  justify-content: space-between;
+  color: #8d7771;
+}
+
+.adaptiveLoading.failed button {
+  border: 0;
+  background: transparent;
+  color: #b78a7d;
+  font-size: 7px;
+  cursor: pointer;
+}
+
+@keyframes adaptiveSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.adaptiveValues {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin: 0 10px 8px;
+  overflow: hidden;
+  border: 1px solid #303237;
+  border-radius: 6px;
+  background: #303237;
+}
+
+.adaptiveValues > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 5px;
+  background: #1b1c20;
+  text-align: center;
+}
+
+.adaptiveValues span {
+  color: #65686f;
+  font-size: 6px;
+}
+
+.adaptiveValues strong {
+  overflow: hidden;
+  color: #b5bab9;
+  font-size: 7px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adaptiveProtection {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 10px 8px;
+}
+
+.adaptiveProtection span {
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: rgba(102, 227, 188, 0.055);
+  color: #778983;
+  font-size: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.adaptiveFooter {
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-top: 1px solid #2f3135;
+}
+
+.adaptiveFooter span {
+  color: #68726f;
+  font-size: 7px;
+}
+
+.adaptiveFooter button {
+  border: 0;
+  background: transparent;
+  color: #7f9e95;
+  font-size: 7px;
+  cursor: pointer;
+}
+
+.adaptiveFooter button:hover {
+  color: var(--accent);
+}
+
 .activeLut {
   margin: 13px 14px 2px;
   padding: 10px;

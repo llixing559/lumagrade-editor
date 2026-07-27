@@ -78,7 +78,7 @@ function clamp(value: number, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
-function sample(lut: Lut3D, r: number, g: number, b: number) {
+export function sampleLut(lut: Lut3D, r: number, g: number, b: number) {
   const { size, data, domainMin, domainMax } = lut;
   const maxIndex = size - 1;
   const normalizedR = clamp(
@@ -130,6 +130,22 @@ function sample(lut: Lut3D, r: number, g: number, b: number) {
   return output;
 }
 
+export function applyLutToRgb(
+  lut: Lut3D,
+  r: number,
+  g: number,
+  b: number,
+  intensity = 100,
+): [number, number, number] {
+  const mix = clamp(intensity / 100);
+  const [lutR, lutG, lutB] = sampleLut(lut, r, g, b);
+  return [
+    clamp(r + (lutR - r) * mix),
+    clamp(g + (lutG - g) * mix),
+    clamp(b + (lutB - b) * mix),
+  ];
+}
+
 export function applyLut(imageData: ImageData, lut: Lut3D, intensity: number) {
   const pixels = imageData.data;
   const mix = clamp(intensity / 100);
@@ -138,7 +154,7 @@ export function applyLut(imageData: ImageData, lut: Lut3D, intensity: number) {
     const sourceR = pixels[offset] / 255;
     const sourceG = pixels[offset + 1] / 255;
     const sourceB = pixels[offset + 2] / 255;
-    const [lutR, lutG, lutB] = sample(lut, sourceR, sourceG, sourceB);
+    const [lutR, lutG, lutB] = sampleLut(lut, sourceR, sourceG, sourceB);
     pixels[offset] = Math.round(
       clamp(sourceR + (lutR - sourceR) * mix) * 255,
     );

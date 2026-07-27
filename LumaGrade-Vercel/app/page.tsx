@@ -18,6 +18,13 @@ import {
   Lut3D,
   parseCube,
 } from "./lut";
+import {
+  AdaptiveProfile,
+  analyzeAdaptiveProfile,
+  applyAdaptiveInput,
+  applyAdaptiveOutput,
+  LutLayer,
+} from "./adaptive-lut";
 import LutCreator from "./LutCreator";
 
 type Adjustments = {
@@ -213,12 +220,18 @@ function buildCssFilter(values: Adjustments) {
     .join(" ");
 }
 
+function signed(value: number, digits = 0) {
+  const rounded = Number(value.toFixed(digits));
+  return `${rounded > 0 ? "+" : ""}${rounded}`;
+}
+
 export default function Home() {
   const imageInput = useRef<HTMLInputElement>(null);
   const lutInput = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const renderId = useRef(0);
+  const adaptiveAnalysisId = useRef(0);
   const presetRequestId = useRef(0);
   const presetLutCache = useRef<Map<string, Lut3D>>(new Map());
   const undoStack = useRef<EditorSnapshot[]>([]);
@@ -252,6 +265,11 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [autoAdaptEnabled, setAutoAdaptEnabled] = useState(true);
+  const [adaptiveProfile, setAdaptiveProfile] =
+    useState<AdaptiveProfile | null>(null);
+  const [isAnalyzingAdaptation, setIsAnalyzingAdaptation] = useState(false);
+  const [adaptiveAnalysisVersion, setAdaptiveAnalysisVersion] = useState(0);
   const [histogram, setHistogram] = useState<Histogram>({
     red: Array(32).fill(0),
     green: Array(32).fill(0),
@@ -271,6 +289,15 @@ export default function Home() {
     () => buildCssFilter(adjustments),
     [adjustments],
   );
+
+  const activeLutLayers = useMemo<LutLayer[]>(() => {
+    const layers: LutLayer[] = [];
+    if (presetLut && presetIntensity > 0) {
+      layers.push({ lut: presetLut, intensity: presetIntensity });
+    }
+    if (lut && intensity > 0) layers.push({ lut, intensity });
+    return layers;
+  }, [intensity, lut, presetIntensity, presetLut]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -388,6 +415,7 @@ export default function Home() {
         return nextUrl;
       });
       setFileName(file.name);
+      setAdaptiveProfile(null);
       undoStack.current = [];
       redoStack.current = [];
       syncHistoryState();
@@ -424,6 +452,89 @@ export default function Home() {
 
   useEffect(() => {
     const image = imageRef.current;
+    const analysisId = ++adaptiveAnalysisId.current;
+    if (
+      !image ||
+      !imageReady ||
+      !autoAdaptEnabled ||
+      activeLutLayers.length === 0
+    ) {
+      setAdaptiveProfile(null);
+      setIsAnalyzingAdaptation(false);
+      return;
+    }
+
+    setIsAnalyzingAdaptation(true);
+    setAdaptiveProfile(null);
+    const timer = window.setTimeout(() => {
+      const frame = window.requestAnimationFrame(() => {
+        if (analysisId !== adaptiveAnalysisId.current) return;
+        try {
+          const analysisCanvas = document.createElement("canvas");
+          const maxEdge = 760;
+          const ratio = Math.min(
+            1,
+            maxEdge / Math.max(image.naturalWidth, image.naturalHeight),
+          );
+          analysisCanvas.width = Math.max(
+            1,
+            Math.round(image.naturalWidth * ratio),
+          );
+          analysisCanvas.height = Math.max(
+            1,
+            Math.round(image.naturalHeight * ratio),
+          );
+          const context = analysisCanvas.getContext("2d", {
+            alpha: false,
+            willReadFrequently: true,
+          });
+          if (!context) throw new Error("无法创建智能分析画布");
+          context.drawImage(
+            image,
+            0,
+            0,
+            analysisCanvas.width,
+            analysisCanvas.height,
+          );
+          const data = context.getImageData(
+            0,
+            0,
+            analysisCanvas.width,
+            analysisCanvas.height,
+          );
+          const profile = analyzeAdaptiveProfile(data, activeLutLayers);
+          if (analysisId === adaptiveAnalysisId.current) {
+            setAdaptiveProfile(profile);
+          }
+        } catch {
+          if (analysisId === adaptiveAnalysisId.current) {
+            setAdaptiveProfile(null);
+            showToast("智能匹配分析失败，已保留普通 LUT 模式");
+          }
+        } finally {
+          if (analysisId === adaptiveAnalysisId.current) {
+            setIsAnalyzingAdaptation(false);
+          }
+        }
+      });
+      if (analysisId !== adaptiveAnalysisId.current) {
+        window.cancelAnimationFrame(frame);
+      }
+    }, 90);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeLutLayers,
+    adaptiveAnalysisVersion,
+    autoAdaptEnabled,
+    imageReady,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    const image = imageRef.current;
     const canvas = canvasRef.current;
     if (!image || !canvas || !canvas.width) return;
     const currentRender = ++renderId.current;
@@ -440,12 +551,30 @@ export default function Home() {
 
       let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       let pixelsChanged = false;
+      if (
+        adaptiveProfile &&
+        autoAdaptEnabled &&
+        !isShowingOriginal &&
+        activeLutLayers.length > 0
+      ) {
+        imageData = applyAdaptiveInput(imageData, adaptiveProfile);
+        pixelsChanged = true;
+      }
       if (presetLut && presetIntensity > 0 && !isShowingOriginal) {
         imageData = applyLut(imageData, presetLut, presetIntensity);
         pixelsChanged = true;
       }
       if (lut && !isShowingOriginal && intensity > 0) {
         imageData = applyLut(imageData, lut, intensity);
+        pixelsChanged = true;
+      }
+      if (
+        adaptiveProfile &&
+        autoAdaptEnabled &&
+        !isShowingOriginal &&
+        activeLutLayers.length > 0
+      ) {
+        imageData = applyAdaptiveOutput(imageData, adaptiveProfile);
         pixelsChanged = true;
       }
       if (pixelsChanged) context.putImageData(imageData, 0, 0);
@@ -455,6 +584,9 @@ export default function Home() {
 
     return () => window.cancelAnimationFrame(frame);
   }, [
+    activeLutLayers.length,
+    adaptiveProfile,
+    autoAdaptEnabled,
     filter,
     imageReady,
     intensity,
@@ -579,10 +711,20 @@ export default function Home() {
           exportCanvas.width,
           exportCanvas.height,
         );
+        const exportProfile =
+          autoAdaptEnabled && activeLutLayers.length > 0
+            ? adaptiveProfile ?? analyzeAdaptiveProfile(data, activeLutLayers)
+            : null;
+        if (exportProfile) {
+          data = applyAdaptiveInput(data, exportProfile);
+        }
         if (presetLut && presetIntensity > 0) {
           data = applyLut(data, presetLut, presetIntensity);
         }
         if (lut && intensity > 0) data = applyLut(data, lut, intensity);
+        if (exportProfile) {
+          data = applyAdaptiveOutput(data, exportProfile);
+        }
         context.putImageData(data, 0, 0);
       }
       const blob = await new Promise<Blob | null>((resolve) =>
@@ -667,9 +809,17 @@ export default function Home() {
               <button
                 className="exportButton"
                 onClick={downloadPreview}
-                disabled={isExporting || isPresetLoading}
+                disabled={
+                  isExporting || isPresetLoading || isAnalyzingAdaptation
+                }
               >
-                {isExporting ? "处理中…" : isPresetLoading ? "载入 LUT…" : "导出"}
+                {isExporting
+                  ? "处理中…"
+                  : isPresetLoading
+                    ? "载入 LUT…"
+                    : isAnalyzingAdaptation
+                      ? "智能分析…"
+                      : "导出"}
               </button>
             </>
           )}
@@ -745,13 +895,19 @@ export default function Home() {
             <span>
               {isPresetLoading
                 ? "正在载入 33³ 内置 LUT…"
+                : isAnalyzingAdaptation
+                  ? "正在分析曝光、白平衡与动态范围…"
                 : isRendering
                 ? "正在渲染…"
                 : imageUrl
                   ? lut
-                    ? `${lut.size}³ LUT · ${intensity}%`
+                    ? `${lut.size}³ LUT · ${intensity}%${
+                        adaptiveProfile && autoAdaptEnabled ? " · 智能匹配" : ""
+                      }`
                     : presetLut
-                      ? `33³ 内置 LUT · ${presetIntensity}%`
+                      ? `33³ 内置 LUT · ${presetIntensity}%${
+                          adaptiveProfile && autoAdaptEnabled ? " · 智能匹配" : ""
+                        }`
                       : "适合画面"
                   : "本地处理 · 不上传照片"}
             </span>
@@ -945,6 +1101,129 @@ export default function Home() {
                 </div>
                 <span>RGB</span>
               </div>
+
+              {imageUrl && activeLutLayers.length > 0 && (
+                <section
+                  className={
+                    autoAdaptEnabled
+                      ? "adaptiveCard enabled"
+                      : "adaptiveCard"
+                  }
+                >
+                  <div className="adaptiveHeader">
+                    <div>
+                      <span className="adaptiveMark">A</span>
+                      <div>
+                        <strong>智能匹配</strong>
+                        <small>按当前照片适配 LUT</small>
+                      </div>
+                    </div>
+                    <button
+                      className="adaptiveSwitch"
+                      role="switch"
+                      aria-checked={autoAdaptEnabled}
+                      aria-label="智能匹配"
+                      onClick={() =>
+                        setAutoAdaptEnabled((current) => !current)
+                      }
+                    >
+                      <i />
+                    </button>
+                  </div>
+
+                  {autoAdaptEnabled && (
+                    <>
+                      {isAnalyzingAdaptation ? (
+                        <div className="adaptiveLoading">
+                          <i />
+                          <span>正在分析曝光、光源和动态范围…</span>
+                        </div>
+                      ) : adaptiveProfile ? (
+                        <>
+                          <div className="adaptiveValues">
+                            <div>
+                              <span>曝光</span>
+                              <strong>
+                                {signed(
+                                  adaptiveProfile.exposureEv +
+                                    adaptiveProfile.postExposureEv,
+                                  2,
+                                )}{" "}
+                                EV
+                              </strong>
+                            </div>
+                            <div>
+                              <span>色温</span>
+                              <strong>
+                                {signed(adaptiveProfile.temperature)}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>色调</span>
+                              <strong>{signed(adaptiveProfile.tint)}</strong>
+                            </div>
+                            <div>
+                              <span>反差</span>
+                              <strong>
+                                {signed((adaptiveProfile.contrast - 1) * 100)}%
+                              </strong>
+                            </div>
+                          </div>
+                          <div className="adaptiveProtection">
+                            <span>
+                              阴影保护{" "}
+                              {Math.round(
+                                (adaptiveProfile.shadowLift +
+                                  adaptiveProfile.postBlackLift) *
+                                  1000,
+                              )}
+                            </span>
+                            <span>
+                              高光保护{" "}
+                              {Math.round(
+                                (adaptiveProfile.highlightCompression +
+                                  adaptiveProfile.postHighlightCompression) *
+                                  1000,
+                              )}
+                            </span>
+                            <span>
+                              溢出{" "}
+                              {(adaptiveProfile.clippedBefore * 100).toFixed(1)}
+                              % →{" "}
+                              {(adaptiveProfile.clippedAfter * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="adaptiveFooter">
+                            <span>可信度 {adaptiveProfile.confidence}%</span>
+                            <button
+                              onClick={() =>
+                                setAdaptiveAnalysisVersion(
+                                  (version) => version + 1,
+                                )
+                              }
+                            >
+                              重新分析
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="adaptiveLoading failed">
+                          <span>本次未能建立匹配参数，当前使用普通 LUT</span>
+                          <button
+                            onClick={() =>
+                              setAdaptiveAnalysisVersion(
+                                (version) => version + 1,
+                              )
+                            }
+                          >
+                            重试
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              )}
 
               {lutName && (
                 <div className="activeLut">

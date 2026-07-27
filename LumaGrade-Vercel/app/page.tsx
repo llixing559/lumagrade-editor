@@ -33,7 +33,8 @@ type Preset = {
   id: string;
   name: string;
   note: string;
-  filter: string;
+  lutPath: string | null;
+  defaultIntensity: number;
   colors: [string, string];
 };
 
@@ -60,83 +61,89 @@ const PRESETS: Preset[] = [
     id: "none",
     name: "原片",
     note: "ORIGINAL",
-    filter: "",
+    lutPath: null,
+    defaultIntensity: 0,
     colors: ["#8e8b84", "#343c45"],
   },
   {
-    id: "aura",
-    name: "Aura 400",
-    note: "柔和人像",
-    filter: "brightness(1.04) contrast(.94) saturate(.91) sepia(.08)",
-    colors: ["#d9b58a", "#627773"],
-  },
-  {
-    id: "kyoto",
-    name: "Kyoto",
-    note: "日系低饱和",
-    filter: "brightness(1.05) contrast(.9) saturate(.78) sepia(.05)",
-    colors: ["#c7b69f", "#6d8077"],
-  },
-  {
-    id: "cinder",
-    name: "Cinder",
-    note: "电影青橙",
-    filter: "contrast(1.09) saturate(.88) sepia(.1) hue-rotate(330deg)",
-    colors: ["#c57754", "#244d55"],
-  },
-  {
-    id: "chrome",
-    name: "Chrome",
-    note: "通透高反差",
-    filter: "contrast(1.14) saturate(1.1) brightness(.99)",
-    colors: ["#e0ad55", "#36698c"],
-  },
-  {
-    id: "mono",
-    name: "Mono 08",
-    note: "细腻黑白",
-    filter: "grayscale(1) contrast(1.12) brightness(1.02)",
-    colors: ["#c9c9c7", "#323234"],
-  },
-  {
-    id: "portra400",
+    id: "portra-400",
     name: "Portra 400",
-    note: "炮塔 400 · 暖肤",
-    filter:
-      "brightness(1.045) contrast(.925) saturate(.94) sepia(.065) hue-rotate(352deg)",
-    colors: ["#e0b588", "#78918c"],
+    note: "光谱模拟 · 自然暖肤",
+    lutPath: "/luts/portra-400.cube",
+    defaultIntensity: 82,
+    colors: ["#e2b68e", "#768d86"],
   },
   {
-    id: "hasselblad",
-    name: "Hasselblad",
-    note: "自然色彩 · 细腻层次",
-    filter:
-      "brightness(1.018) contrast(1.045) saturate(1.035) sepia(.018) hue-rotate(357deg)",
-    colors: ["#d69a6f", "#4d8290"],
+    id: "gold-200",
+    name: "Kodak Gold 200",
+    note: "光谱模拟 · 金色日常",
+    lutPath: "/luts/gold-200.cube",
+    defaultIntensity: 78,
+    colors: ["#e8ad59", "#6d7e72"],
   },
   {
-    id: "leica",
-    name: "Leica",
-    note: "浓郁德味 · 深邃红色",
-    filter:
-      "brightness(.995) contrast(1.115) saturate(1.025) sepia(.045) hue-rotate(350deg)",
-    colors: ["#b74e42", "#263c42"],
+    id: "vision3-250d-2383",
+    name: "Vision3 250D",
+    note: "2383 印片 · 电影日光",
+    lutPath: "/luts/vision3-250d-2383.cube",
+    defaultIntensity: 78,
+    colors: ["#c87851", "#315a63"],
   },
   {
-    id: "fuji-cc",
+    id: "provia-100f",
+    name: "Fuji Provia 100F",
+    note: "光谱模拟 · 透明自然",
+    lutPath: "/luts/provia-100f.cube",
+    defaultIntensity: 72,
+    colors: ["#e1a05e", "#438397"],
+  },
+  {
+    id: "velvia-50",
+    name: "Fuji Velvia 50",
+    note: "光谱模拟 · 浓郁风光",
+    lutPath: "/luts/velvia-50.cube",
+    defaultIntensity: 68,
+    colors: ["#e25744", "#1f637d"],
+  },
+  {
+    id: "fuji-classic-chrome",
     name: "FUJI CC",
-    note: "Classic Chrome · 纪实低饱和",
-    filter:
-      "brightness(1.012) contrast(1.075) saturate(.78) sepia(.035) hue-rotate(350deg)",
-    colors: ["#b59b77", "#506a72"],
+    note: "Classic Chrome · 官方样片参考",
+    lutPath: "/luts/fuji-classic-chrome.cube",
+    defaultIntensity: 88,
+    colors: ["#ac9a80", "#4e6870"],
   },
   {
-    id: "fuji-nc",
+    id: "fuji-nostalgic-neg",
     name: "FUJI NC",
-    note: "Nostalgic Neg. · 怀旧暖调",
-    filter:
-      "brightness(1.035) contrast(1.035) saturate(1.035) sepia(.085) hue-rotate(354deg)",
-    colors: ["#d39b62", "#4f716f"],
+    note: "Nostalgic Neg. · 官方样片参考",
+    lutPath: "/luts/fuji-nostalgic-neg.cube",
+    defaultIntensity: 86,
+    colors: ["#d29761", "#56756f"],
+  },
+  {
+    id: "hasselblad-natural",
+    name: "Hasselblad",
+    note: "HNCS 理念参考 · 自然层次",
+    lutPath: "/luts/hasselblad-natural.cube",
+    defaultIntensity: 92,
+    colors: ["#cf916c", "#4f8490"],
+  },
+  {
+    id: "leica-classic",
+    name: "Leica Classic",
+    note: "官方 Look 参考 · 暖调电影感",
+    lutPath: "/luts/leica-classic.cube",
+    defaultIntensity: 88,
+    colors: ["#b95d48", "#34454a"],
+  },
+  {
+    id: "tri-x-400",
+    name: "Kodak Tri-X 400",
+    note: "光谱模拟 · 经典黑白",
+    lutPath: "/luts/tri-x-400.cube",
+    defaultIntensity: 100,
+    colors: ["#c8c7c2", "#2e2f32"],
   },
 ];
 
@@ -176,7 +183,7 @@ function LogoMark() {
   );
 }
 
-function buildCssFilter(preset: Preset, values: Adjustments) {
+function buildCssFilter(values: Adjustments) {
   const brightness = Math.max(
     0,
     1 + values.exposure / 120 + values.highlights / 500,
@@ -194,7 +201,6 @@ function buildCssFilter(preset: Preset, values: Adjustments) {
       : "";
 
   return [
-    preset.filter,
     `brightness(${brightness + shadowLift})`,
     `contrast(${contrast})`,
     `saturate(${saturation})`,
@@ -211,6 +217,8 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const renderId = useRef(0);
+  const presetRequestId = useRef(0);
+  const presetLutCache = useRef<Map<string, Lut3D>>(new Map());
   const undoStack = useRef<EditorSnapshot[]>([]);
   const redoStack = useRef<EditorSnapshot[]>([]);
   const panStart = useRef<{
@@ -229,6 +237,8 @@ export default function Home() {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [presetId, setPresetId] = useState("none");
+  const [presetLut, setPresetLut] = useState<Lut3D | null>(null);
+  const [isPresetLoading, setIsPresetLoading] = useState(false);
   const [lutName, setLutName] = useState<string | null>(null);
   const [lut, setLut] = useState<Lut3D | null>(null);
   const [intensity, setIntensity] = useState(100);
@@ -253,14 +263,65 @@ export default function Home() {
   );
 
   const filter = useMemo(
-    () => buildCssFilter(preset, adjustments),
-    [preset, adjustments],
+    () => buildCssFilter(adjustments),
+    [adjustments],
   );
 
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2400);
   }, []);
+
+  useEffect(() => {
+    const requestId = ++presetRequestId.current;
+    const controller = new AbortController();
+
+    const loadPreset = async () => {
+      await Promise.resolve();
+      if (controller.signal.aborted) return;
+
+      const path = preset.lutPath;
+      if (!path) {
+        setPresetLut(null);
+        setIsPresetLoading(false);
+        return;
+      }
+
+      const cached = presetLutCache.current.get(path);
+      if (cached) {
+        setPresetLut(cached);
+        setIsPresetLoading(false);
+        return;
+      }
+
+      setPresetLut(null);
+      setIsPresetLoading(true);
+
+      try {
+        const response = await fetch(path, {
+          cache: "force-cache",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`无法载入内置 LUT（${response.status}）`);
+        const contents = await response.text();
+        const parsed = parseCube(contents, preset.name);
+        presetLutCache.current.set(path, parsed);
+        if (requestId === presetRequestId.current) setPresetLut(parsed);
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        if (requestId === presetRequestId.current) {
+          setPresetLut(null);
+          showToast(error instanceof Error ? error.message : "内置 LUT 载入失败");
+        }
+      } finally {
+        if (requestId === presetRequestId.current) setIsPresetLoading(false);
+      }
+    };
+
+    void loadPreset();
+
+    return () => controller.abort();
+  }, [preset, showToast]);
 
   const currentSnapshot = (): EditorSnapshot => ({
     adjustments: { ...adjustments },
@@ -371,6 +432,10 @@ export default function Home() {
 
       let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       let pixelsChanged = false;
+      if (presetLut && !isShowingOriginal) {
+        imageData = applyLut(imageData, presetLut, preset.defaultIntensity);
+        pixelsChanged = true;
+      }
       if (lut && !isShowingOriginal && intensity > 0) {
         imageData = applyLut(imageData, lut, intensity);
         pixelsChanged = true;
@@ -381,7 +446,15 @@ export default function Home() {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [filter, imageReady, intensity, isShowingOriginal, lut]);
+  }, [
+    filter,
+    imageReady,
+    intensity,
+    isShowingOriginal,
+    lut,
+    preset.defaultIntensity,
+    presetLut,
+  ]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -472,6 +545,10 @@ export default function Home() {
       showToast("请先导入一张照片");
       return;
     }
+    if (isPresetLoading) {
+      showToast("请等待内置 LUT 载入完成");
+      return;
+    }
     try {
       setIsExporting(true);
       showToast("正在渲染全分辨率照片…");
@@ -486,14 +563,17 @@ export default function Home() {
       context.filter = filter;
       context.drawImage(image, 0, 0);
       context.filter = "none";
-      if (lut && intensity > 0) {
+      if (presetLut || (lut && intensity > 0)) {
         let data = context.getImageData(
           0,
           0,
           exportCanvas.width,
           exportCanvas.height,
         );
-        data = applyLut(data, lut, intensity);
+        if (presetLut) {
+          data = applyLut(data, presetLut, preset.defaultIntensity);
+        }
+        if (lut && intensity > 0) data = applyLut(data, lut, intensity);
         context.putImageData(data, 0, 0);
       }
       const blob = await new Promise<Blob | null>((resolve) =>
@@ -569,9 +649,9 @@ export default function Home() {
           <button
             className="exportButton"
             onClick={downloadPreview}
-            disabled={isExporting}
+            disabled={isExporting || isPresetLoading}
           >
-            {isExporting ? "处理中…" : "导出"}
+            {isExporting ? "处理中…" : isPresetLoading ? "载入 LUT…" : "导出"}
           </button>
         </div>
       </header>
@@ -617,12 +697,16 @@ export default function Home() {
           <div className="stageMeta">
             <span>{isShowingOriginal ? "原始照片" : preset.name}</span>
             <span>
-              {isRendering
+              {isPresetLoading
+                ? "正在载入 33³ 内置 LUT…"
+                : isRendering
                 ? "正在渲染…"
                 : imageUrl
                   ? lut
                     ? `${lut.size}³ LUT · ${intensity}%`
-                    : "适合画面"
+                    : presetLut
+                      ? `33³ 内置 LUT · ${preset.defaultIntensity}%`
+                      : "适合画面"
                   : "本地处理 · 不上传照片"}
             </span>
           </div>
@@ -704,7 +788,7 @@ export default function Home() {
             <div className="dockHeading">
               <div>
                 <span>快速风格</span>
-                <small>点击即可预览</small>
+                <small>33³ 真实 LUT · 点击预览</small>
               </div>
               <span className="dockCount">{PRESETS.length} 款</span>
             </div>

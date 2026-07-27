@@ -10,7 +10,8 @@
     "test:lut": "node scripts/test-lut-trainer.cjs",
     "test:adaptive": "node scripts/test-adaptive-lut.cjs",
     "test:adjustments": "node scripts/test-image-adjustments.cjs",
-    "test:providers": "node scripts/test-ai-providers.cjs"
+    "test:providers": "node scripts/test-ai-providers.cjs",
+    "test:workspace": "node scripts/test-workspace-storage.cjs"
   },
   "dependencies": {
     "next": "16.2.6",

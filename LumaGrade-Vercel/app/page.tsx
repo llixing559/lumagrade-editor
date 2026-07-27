@@ -18,6 +18,7 @@ import {
   Lut3D,
   parseCube,
 } from "./lut";
+import LutCreator from "./LutCreator";
 
 type Adjustments = {
   exposure: number;
@@ -245,7 +246,9 @@ export default function Home() {
   const [lut, setLut] = useState<Lut3D | null>(null);
   const [intensity, setIntensity] = useState(100);
   const [adjustments, setAdjustments] = useState<Adjustments>(DEFAULTS);
-  const [activePanel, setActivePanel] = useState<"edit" | "presets">("edit");
+  const [activePanel, setActivePanel] = useState<
+    "edit" | "presets" | "creator"
+  >("edit");
   const [toast, setToast] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -625,40 +628,51 @@ export default function Home() {
         </div>
 
         <div className="topActions">
-          <button
-            className="historyButton"
-            aria-label="撤销"
-            disabled={!historyState.canUndo}
-            onClick={undo}
-          >
-            ↶
-          </button>
-          <button
-            className="historyButton"
-            aria-label="重做"
-            disabled={!historyState.canRedo}
-            onClick={redo}
-          >
-            ↷
-          </button>
-          <button className="textButton" onClick={reset}>
-            重置
-          </button>
-          <button
-            className="compareButton"
-            disabled={!imageUrl}
-            {...comparisonHandlers}
-          >
-            <span className="compareIcon" />
-            按住看原图
-          </button>
-          <button
-            className="exportButton"
-            onClick={downloadPreview}
-            disabled={isExporting || isPresetLoading}
-          >
-            {isExporting ? "处理中…" : isPresetLoading ? "载入 LUT…" : "导出"}
-          </button>
+          {activePanel === "creator" ? (
+            <>
+              <span className="creatorTopLabel">33³ LUT LAB</span>
+              <button className="textButton" onClick={() => setActivePanel("edit")}>
+                返回编辑器
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="historyButton"
+                aria-label="撤销"
+                disabled={!historyState.canUndo}
+                onClick={undo}
+              >
+                ↶
+              </button>
+              <button
+                className="historyButton"
+                aria-label="重做"
+                disabled={!historyState.canRedo}
+                onClick={redo}
+              >
+                ↷
+              </button>
+              <button className="textButton" onClick={reset}>
+                重置
+              </button>
+              <button
+                className="compareButton"
+                disabled={!imageUrl}
+                {...comparisonHandlers}
+              >
+                <span className="compareIcon" />
+                按住看原图
+              </button>
+              <button
+                className="exportButton"
+                onClick={downloadPreview}
+                disabled={isExporting || isPresetLoading}
+              >
+                {isExporting ? "处理中…" : isPresetLoading ? "载入 LUT…" : "导出"}
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -680,6 +694,15 @@ export default function Home() {
             <span className="railGlyph gridGlyph" />
             <small>滤镜</small>
           </button>
+          <button
+            className={
+              activePanel === "creator" ? "railButton active" : "railButton"
+            }
+            onClick={() => setActivePanel("creator")}
+          >
+            <span className="railGlyph creatorGlyph" />
+            <small>制 LUT</small>
+          </button>
           <div className="railSpacer" />
           <button
             className="railButton importRail"
@@ -690,6 +713,23 @@ export default function Home() {
           </button>
         </aside>
 
+        {activePanel === "creator" ? (
+          <LutCreator
+            showToast={showToast}
+            onExit={() => setActivePanel("edit")}
+            onUseLut={(trainedLut) => {
+              remember();
+              setPresetId("none");
+              setPresetIntensity(0);
+              setLut(trainedLut);
+              setLutName(trainedLut.title);
+              setIntensity(100);
+              setActivePanel("edit");
+              showToast(`已载入 ${trainedLut.title} · 33³`);
+            }}
+          />
+        ) : (
+          <>
         <section
           className={`stage ${isDragging ? "isDragging" : ""}`}
           onDragEnter={(event) => {
@@ -1014,6 +1054,8 @@ export default function Home() {
             </>
           )}
         </aside>
+          </>
+        )}
       </section>
 
       <footer className="statusbar">
@@ -1021,10 +1063,14 @@ export default function Home() {
           <i className="statusDot" />
           端侧处理
         </span>
-        <span>照片不会上传至服务器</span>
+        <span>
+          {activePanel === "creator"
+            ? "参考照片逐张分析，不上传服务器"
+            : "照片不会上传至服务器"}
+        </span>
         <span className="statusSpacer" />
-        <span>sRGB</span>
-        <span>{zoom}%</span>
+        <span>{activePanel === "creator" ? "33³ CUBE" : "sRGB"}</span>
+        <span>{activePanel === "creator" ? "35,937 节点" : `${zoom}%`}</span>
       </footer>
 
       <input

@@ -46,7 +46,20 @@ import {
   hasAdjustments,
 } from "./image-adjustments";
 import LutCreator from "./LutCreator";
+import SplashScreen from "./SplashScreen";
 import AiConnectionPanel from "./AiConnectionPanel";
+import {
+  WORKSPACE_CLEAR_EVENT,
+  StoredFile,
+  clearWorkspaceEntries,
+  deleteWorkspaceEntry,
+  fileToStored,
+  loadWorkspaceEntry,
+  requestPersistentWorkspaceStorage,
+  saveWorkspaceEntry,
+  storedToFile,
+  workspaceErrorMessage,
+} from "./workspace-storage";
 
 type Adjustments = AdjustmentValues;
 
@@ -66,6 +79,22 @@ type EditorSnapshot = {
   intensity: number;
   lutName: string | null;
   lut: Lut3D | null;
+};
+
+type EditorWorkspaceState = {
+  version: 1;
+  savedAt: number;
+  presetId: string;
+  presetIntensity: number;
+  intensity: number;
+  lutName: string | null;
+  lut: Lut3D | null;
+  manualAdjustments: Adjustments;
+  autoAdaptEnabled: boolean;
+  zoom: number;
+  pan: { x: number; y: number };
+  activePanel: "edit" | "presets" | "creator";
+  aiConnection: Pick<AiConnection, "endpoint" | "model">;
 };
 
 const DEFAULTS: Adjustments = {
@@ -248,6 +277,7 @@ export default function Home() {
     panY: number;
   } | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageReady, setImageReady] = useState(0);
   const [fileName, setFileName] = useState("未命名照片");
   const [dimensions, setDimensions] = useState("等待导入");
@@ -298,6 +328,14 @@ export default function Home() {
     canUndo: false,
     canRedo: false,
   });
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [workspaceStatus, setWorkspaceStatus] = useState<
+    "loading" | "saving" | "saved" | "error"
+  >("loading");
+  const [workspaceSavedAt, setWorkspaceSavedAt] = useState<number | null>(null);
+  const workspaceSuspended = useRef(false);
+  const workspaceStateSaveError = useRef(false);
+  const workspaceAssetSaveError = useRef(false);
 
   const preset = useMemo(
     () => PRESETS.find((item) => item.id === presetId) ?? PRESETS[0],
@@ -455,11 +493,12 @@ export default function Home() {
   };
 
   const loadImage = useCallback(
-    (file?: File) => {
+    (file?: File, restoring = false) => {
       if (!file || !file.type.startsWith("image/")) {
         showToast("请选择 JPG、PNG 或 WebP 图片");
         return;
       }
+      setImageFile(file);
       const nextUrl = URL.createObjectURL(file);
       setImageUrl((current) => {
         if (current) URL.revokeObjectURL(current);
@@ -473,14 +512,183 @@ export default function Home() {
       undoStack.current = [];
       redoStack.current = [];
       syncHistoryState();
-      setPresetId("none");
-      setPresetIntensity(0);
-      setManualAdjustments(DEFAULTS);
-      setZoom(100);
-      setPan({ x: 0, y: 0 });
+      if (!restoring) {
+        setPresetId("none");
+        setPresetIntensity(0);
+        setManualAdjustments(DEFAULTS);
+        setZoom(100);
+        setPan({ x: 0, y: 0 });
+      }
     },
     [showToast],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void requestPersistentWorkspaceStorage();
+    const restoreWorkspace = async () => {
+      try {
+        const [savedState, savedImage] = await Promise.all([
+          loadWorkspaceEntry<EditorWorkspaceState>("editor-state"),
+          loadWorkspaceEntry<StoredFile>("editor-image"),
+        ]);
+        if (cancelled) return;
+        if (savedImage?.blob && savedImage.name) {
+          loadImage(storedToFile(savedImage), true);
+        }
+        if (savedState?.version === 1) {
+          const restoredPreset = PRESETS.some(
+            (item) => item.id === savedState.presetId,
+          )
+            ? savedState.presetId
+            : "none";
+          setPresetId(restoredPreset);
+          setPresetIntensity(
+            Math.max(0, Math.min(100, savedState.presetIntensity || 0)),
+          );
+          setIntensity(Math.max(0, Math.min(100, savedState.intensity || 0)));
+          setLutName(savedState.lutName ?? null);
+          setLut(savedState.lut ?? null);
+          setManualAdjustments(
+            clampAdjustments(savedState.manualAdjustments ?? DEFAULTS),
+          );
+          setAutoAdaptEnabled(savedState.autoAdaptEnabled !== false);
+          setZoom(Math.max(50, Math.min(400, savedState.zoom || 100)));
+          setPan({
+            x: Number.isFinite(savedState.pan?.x) ? savedState.pan.x : 0,
+            y: Number.isFinite(savedState.pan?.y) ? savedState.pan.y : 0,
+          });
+          setActivePanel(
+            ["edit", "presets", "creator"].includes(savedState.activePanel)
+              ? savedState.activePanel
+              : "edit",
+          );
+          setAiConnection({
+            endpoint: savedState.aiConnection?.endpoint ?? "",
+            model: savedState.aiConnection?.model ?? "",
+            apiKey: "",
+          });
+          setGptAssistEnabled(false);
+          setWorkspaceSavedAt(savedState.savedAt);
+          showToast("已恢复上次工作区 · API Key 未恢复");
+        }
+        setWorkspaceStatus("saved");
+      } catch (error) {
+        if (cancelled) return;
+        setWorkspaceStatus("error");
+        showToast(workspaceErrorMessage(error));
+      } finally {
+        if (!cancelled) setWorkspaceReady(true);
+      }
+    };
+    void restoreWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadImage, showToast]);
+
+  useEffect(() => {
+    if (!workspaceReady || workspaceSuspended.current) return;
+    const timer = window.setTimeout(async () => {
+      if (workspaceSuspended.current) return;
+      setWorkspaceStatus("saving");
+      const savedAt = Date.now();
+      const state: EditorWorkspaceState = {
+        version: 1,
+        savedAt,
+        presetId,
+        presetIntensity,
+        intensity,
+        lutName,
+        lut,
+        manualAdjustments: clampAdjustments(
+          addAdjustments(manualAdjustments, aiAdjustments),
+        ),
+        autoAdaptEnabled,
+        zoom,
+        pan,
+        activePanel,
+        aiConnection: {
+          endpoint: aiConnection.endpoint,
+          model: aiConnection.model,
+        },
+      };
+      try {
+        await saveWorkspaceEntry("editor-state", state);
+        workspaceStateSaveError.current = false;
+        if (!workspaceSuspended.current) {
+          setWorkspaceSavedAt(savedAt);
+          setWorkspaceStatus(
+            workspaceAssetSaveError.current ? "error" : "saved",
+          );
+        }
+      } catch (error) {
+        workspaceStateSaveError.current = true;
+        setWorkspaceStatus("error");
+        showToast(workspaceErrorMessage(error));
+      }
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [
+    activePanel,
+    aiAdjustments,
+    aiConnection.endpoint,
+    aiConnection.model,
+    autoAdaptEnabled,
+    intensity,
+    lut,
+    lutName,
+    manualAdjustments,
+    pan,
+    presetId,
+    presetIntensity,
+    showToast,
+    workspaceReady,
+    zoom,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceReady || workspaceSuspended.current) return;
+    const timer = window.setTimeout(async () => {
+      if (workspaceSuspended.current) return;
+      try {
+        if (imageFile) {
+          await saveWorkspaceEntry("editor-image", fileToStored(imageFile));
+        } else {
+          await deleteWorkspaceEntry("editor-image");
+        }
+        workspaceAssetSaveError.current = false;
+        if (!workspaceStateSaveError.current) setWorkspaceStatus("saved");
+      } catch (error) {
+        workspaceAssetSaveError.current = true;
+        setWorkspaceStatus("error");
+        showToast(workspaceErrorMessage(error));
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [imageFile, showToast, workspaceReady]);
+
+  const clearSavedWorkspace = async () => {
+    if (
+      !window.confirm(
+        "确定清空本浏览器保存的照片、LUT、训练数据和调整参数吗？",
+      )
+    ) {
+      return;
+    }
+    workspaceSuspended.current = true;
+    window.dispatchEvent(new Event(WORKSPACE_CLEAR_EVENT));
+    setWorkspaceReady(false);
+    try {
+      await clearWorkspaceEntries();
+      window.location.reload();
+    } catch (error) {
+      workspaceSuspended.current = false;
+      setWorkspaceReady(true);
+      setWorkspaceStatus("error");
+      showToast(workspaceErrorMessage(error));
+    }
+  };
 
   useEffect(() => {
     if (!imageUrl) return;
@@ -914,11 +1122,20 @@ export default function Home() {
 
   return (
     <main className="appShell">
+      <SplashScreen />
+      <div className="appAtmosphere" aria-hidden="true">
+        <span className="atmosphereGlow atmosphereGlowOne" />
+        <span className="atmosphereGlow atmosphereGlowTwo" />
+        <span className="atmosphereGrid" />
+      </div>
       <header className="topbar">
         <div className="brand">
           <LogoMark />
-          <span>LUMAGRADE</span>
-          <span className="beta">BETA</span>
+          <span className="brandType">
+            <strong>LUMAGRADE</strong>
+            <small>COLOR STUDIO</small>
+          </span>
+          <span className="beta">LAB</span>
         </div>
 
         <div className="documentTitle" title={fileName}>
@@ -930,6 +1147,12 @@ export default function Home() {
           {activePanel === "creator" ? (
             <>
               <span className="creatorTopLabel">33³ LUT LAB</span>
+              <button
+                className="textButton workspaceClearButton"
+                onClick={clearSavedWorkspace}
+              >
+                清空工作区
+              </button>
               <button className="textButton" onClick={() => setActivePanel("edit")}>
                 返回编辑器
               </button>
@@ -954,6 +1177,12 @@ export default function Home() {
               </button>
               <button className="textButton" onClick={reset}>
                 重置
+              </button>
+              <button
+                className="textButton workspaceClearButton"
+                onClick={clearSavedWorkspace}
+              >
+                清空工作区
               </button>
               <button
                 className="compareButton"
@@ -1587,6 +1816,29 @@ export default function Home() {
                 ? `AI 开启：压缩预览将发送至 ${aiProvider.label}`
                 : `AI 开启：仅发送聚合统计至 ${aiProvider.label}`
               : "照片不会上传至服务器"}
+        </span>
+        <span
+          className={
+            workspaceStatus === "error"
+              ? "workspaceSaveStatus error"
+              : "workspaceSaveStatus"
+          }
+        >
+          {workspaceStatus === "loading"
+            ? "正在恢复工作区…"
+            : workspaceStatus === "saving"
+              ? "正在自动保存…"
+              : workspaceStatus === "error"
+                ? "自动保存失败"
+                : workspaceSavedAt
+                  ? `已自动保存 ${new Date(workspaceSavedAt).toLocaleTimeString(
+                      "zh-CN",
+                      {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      },
+                    )}`
+                  : "工作区自动保存已开启"}
         </span>
         <span className="statusSpacer" />
         <span>{activePanel === "creator" ? "33³ CUBE" : "sRGB"}</span>

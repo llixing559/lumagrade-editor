@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./premium-overrides.css";
 
 export const metadata: Metadata = {
   title: "LumaGrade — 在线修图与 33³ LUT 生成器",
@@ -12,6 +13,10 @@ export const metadata: Metadata = {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#090b0d",
 };
 
 export default function RootLayout({
